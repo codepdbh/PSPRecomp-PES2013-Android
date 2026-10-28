@@ -1,0 +1,11 @@
+{
+  "title": "Pro Evolution Soccer 2013",
+  "disc_id": "ULUS10597",
+  "elf_sha256": "5ab84864354b3ee32cf4dbb1a7e0bb0fc914d63b0f25cddfa387af35e09a14db",
+  "load_base": "0x08804000",
+  "entry": "0x08A1B910",
+  "module_name": "pes2010_psp",
+  "gp": "0x08AE7D10",
+  "ram_bytes": 33554432,
+  "unit_span_bytes": "0x4000"
+}

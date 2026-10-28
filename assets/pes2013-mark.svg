@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="360" viewBox="0 0 1120 360">
+  <rect width="1120" height="360" rx="30" fill="#0b1917"/>
+  <g fill="none" stroke="#67d8a1" stroke-width="3" opacity=".3">
+    <rect x="30" y="30" width="1060" height="300" rx="4"/>
+    <path d="M560 30v300M30 105h110v150H30m1060-150H980v150h110"/>
+    <circle cx="560" cy="180" r="72"/>
+  </g>
+  <rect x="245" y="92" width="630" height="176" rx="22" fill="#0b1917"/>
+  <text x="560" y="175" text-anchor="middle" fill="#effbf4" font-family="Arial, sans-serif" font-size="68" font-weight="700">PES 2013</text>
+  <text x="560" y="222" text-anchor="middle" fill="#67d8a1" font-family="Arial, sans-serif" font-size="23" letter-spacing="4">NATIVE RECOMPILATION · ANDROID</text>
+</svg>
