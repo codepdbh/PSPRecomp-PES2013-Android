@@ -19,6 +19,8 @@
 #include <mutex>
 #include <thread>
 #include <pthread.h>
+#include <sys/resource.h>
+
 namespace {
 std::mutex state_mutex;
 std::string status = "Esperando los datos de PES 2013.";
@@ -60,12 +62,26 @@ void play(std::filesystem::path root, std::filesystem::path settings_dir) {
         const auto ini = settings_dir / "VCSNative.ini";
         if (!std::filesystem::exists(ini)) {
             std::ofstream config(ini);
-            config << "[Rendering]\nBackend=Vulkan\n[Timing]\nFrameRate=60\n[Audio]\nEnabled=true\n";
+            config << "[Display]\n"
+                   << "ShowFPS=true\n"
+                   << "UpscaleFilter=Bilinear\n"
+                   << "[Rendering]\n"
+                   << "Backend=Vulkan\n"
+                   << "InternalResolutionMode=Scale\n"
+                   << "InternalScale=3\n"
+                   << "HardwareTransform=true\n"
+                   << "TextureCacheEntries=4096\n"
+                   << "TextureCacheMB=256\n"
+                   << "AnisotropicFiltering=16\n"
+                   << "[Timing]\n"
+                   << "FrameRate=60\n"
+                   << "[Audio]\n"
+                   << "Enabled=true\n";
         }
         vcs::initialize_vcs_configuration(settings_dir);
         auto image = psprecomp::Elf32Image::from_file(executable);
-        // Bound nesting while the diagnostic corpus is built without optimization.
-        setenv("PSPRECOMP_CHAIN_DEPTH", "8", 0);
+        // Deep block chaining for maximum performance on modern high-speed CPU cores (Snapdragon 8 Elite)
+        setenv("PSPRECOMP_CHAIN_DEPTH", "32", 1);
         runtime = std::make_unique<psprecomp::Runtime>(32u * 1024u * 1024u);
         runtime->set_game_root(root);
         const auto relocations = image.load_and_relocate(runtime->memory(), psprecomp::kDefaultPspUserLoadBase);
@@ -121,12 +137,12 @@ extern "C" JNIEXPORT void JNICALL Java_com_psprecomp_pes2013_MainActivity_native
     if (worker_joinable) { pthread_join(worker, nullptr); worker_joinable = false; }
     struct Paths { std::string root, settings; };
     auto paths = std::make_unique<Paths>(Paths{java_string(env, root), java_string(env, settings)});
-    // The unoptimized diagnostic AOT units have large native frames. Bionic's
-    // default pthread stack is smaller than the standalone probe's main stack.
     pthread_attr_t attributes;
     pthread_attr_init(&attributes);
     pthread_attr_setstacksize(&attributes, 16u * 1024u * 1024u);
     const int error = pthread_create(&worker, &attributes, +[](void *raw) -> void * {
+        pthread_setname_np(pthread_self(), "PES_Worker");
+        setpriority(PRIO_PROCESS, 0, -10);
         std::unique_ptr<Paths> args(static_cast<Paths *>(raw));
         play(args->root, args->settings); return nullptr;
     }, paths.get());

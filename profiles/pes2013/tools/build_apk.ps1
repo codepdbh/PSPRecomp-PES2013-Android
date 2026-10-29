@@ -1,4 +1,8 @@
-param([switch]$SkipNative)
+param(
+    [switch]$SkipNative,
+    [int]$OptLevel = 2,
+    [int]$Jobs = 4
+)
 $ErrorActionPreference = 'Stop'
 $repo = [IO.Path]::GetFullPath((Join-Path $PSScriptRoot '../../..'))
 $sdkRoot = if ($env:ANDROID_HOME) { $env:ANDROID_HOME } else { Join-Path $env:LOCALAPPDATA 'Android/Sdk' }
@@ -13,9 +17,9 @@ $env:ANDROID_HOME = $sdkRoot
 if (-not $SkipNative) {
     & $cmake -S $repo -B $build -G Ninja "-DCMAKE_TOOLCHAIN_FILE=$ndk/build/cmake/android.toolchain.cmake" `
         -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-26 -DANDROID_STL=c++_static `
-        -DCMAKE_BUILD_TYPE=Release -DPSPRECOMP_PROFILE=pes2013 -DPSPRECOMP_BUILD_TESTS=OFF -DPSPRECOMP_GENERATED_OPT_LEVEL=0
+        -DCMAKE_BUILD_TYPE=Release -DPSPRECOMP_PROFILE=pes2013 -DPSPRECOMP_BUILD_TESTS=OFF "-DPSPRECOMP_GENERATED_OPT_LEVEL=$OptLevel"
     if ($LASTEXITCODE -ne 0) { throw 'Android CMake configuration failed' }
-    & $cmake --build $build --target pes2013_android --parallel 2
+    & $cmake --build $build --target pes2013_android --parallel $Jobs
     if ($LASTEXITCODE -ne 0) { throw 'Android native build failed' }
 }
 $destination = Join-Path $repo 'android/app/src/main/jniLibs/arm64-v8a'

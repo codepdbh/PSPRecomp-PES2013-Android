@@ -616,6 +616,80 @@ struct alignas(16) AllegrexContext {
         write_vfpu_vector_with_destination_prefix(result, destination_register, destination_length);
     }
 
+    void execute_vfpu_vi2x(std::uint32_t destination_register,
+                           std::uint32_t source_register,
+                           std::uint32_t source_length,
+                           std::uint32_t operation) noexcept {
+        if (source_length == 0u || source_length > 4u || operation > 3u) return;
+
+        float source[4]{};
+        read_vfpu_vector(source, source_register, source_length);
+        apply_vfpu_source_prefix(source, source_length, 0u);
+
+        std::uint32_t result_bits[4]{};
+        std::uint32_t destination_length = 1u;
+        if (operation == 0u) { // VI2UC: 4-to-1 vector integer to unsigned char
+            destination_length = 1u;
+            std::uint32_t packed = 0u;
+            for (std::uint32_t lane = 0u; lane < std::min(source_length, 4u); ++lane) {
+                const auto val = static_cast<std::int32_t>(std::bit_cast<std::uint32_t>(source[lane]));
+                std::uint32_t byte_val = 0u;
+                if (val > 0) {
+                    byte_val = static_cast<std::uint32_t>(val >> 23u);
+                    if (byte_val > 0xFFu) byte_val = 0xFFu;
+                }
+                packed |= (byte_val & 0xFFu) << (lane * 8u);
+            }
+            result_bits[0] = packed;
+        } else if (operation == 1u) { // VI2C: 4-to-1 vector integer to signed char
+            destination_length = 1u;
+            std::uint32_t packed = 0u;
+            for (std::uint32_t lane = 0u; lane < std::min(source_length, 4u); ++lane) {
+                const auto val = std::bit_cast<std::uint32_t>(source[lane]);
+                const std::uint32_t byte_val = (val >> 24u) & 0xFFu;
+                packed |= byte_val << (lane * 8u);
+            }
+            result_bits[0] = packed;
+        } else if (operation == 2u) { // VI2US: vector integer to unsigned short
+            destination_length = (source_length <= 2u) ? 1u : 2u;
+            for (std::uint32_t pair = 0u; pair < destination_length; ++pair) {
+                std::uint32_t packed = 0u;
+                for (std::uint32_t half = 0u; half < 2u; ++half) {
+                    const std::uint32_t lane = pair * 2u + half;
+                    if (lane < source_length) {
+                        const auto val = static_cast<std::int32_t>(std::bit_cast<std::uint32_t>(source[lane]));
+                        std::uint32_t short_val = 0u;
+                        if (val > 0) {
+                            short_val = static_cast<std::uint32_t>(val >> 15u);
+                            if (short_val > 0xFFFFu) short_val = 0xFFFFu;
+                        }
+                        packed |= (short_val & 0xFFFFu) << (half * 16u);
+                    }
+                }
+                result_bits[pair] = packed;
+            }
+        } else { // VI2S: vector integer to signed short
+            destination_length = (source_length <= 2u) ? 1u : 2u;
+            for (std::uint32_t pair = 0u; pair < destination_length; ++pair) {
+                std::uint32_t packed = 0u;
+                for (std::uint32_t half = 0u; half < 2u; ++half) {
+                    const std::uint32_t lane = pair * 2u + half;
+                    if (lane < source_length) {
+                        const auto val = std::bit_cast<std::uint32_t>(source[lane]);
+                        const std::uint32_t short_val = (val >> 16u) & 0xFFFFu;
+                        packed |= short_val << (half * 16u);
+                    }
+                }
+                result_bits[pair] = packed;
+            }
+        }
+
+        float result[4]{};
+        for (std::uint32_t lane = 0u; lane < destination_length; ++lane)
+            result[lane] = std::bit_cast<float>(result_bits[lane]);
+        write_vfpu_vector_with_destination_prefix(result, destination_register, destination_length);
+    }
+
     template <std::uint32_t DestinationScalarRegister, std::uint32_t SourceRegister,
               std::uint32_t TargetRegister, std::uint32_t Length>
     PSPRECOMP_CONTEXT_FORCEINLINE void execute_vfpu_vdot_ct() noexcept {

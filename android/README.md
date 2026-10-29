@@ -7,7 +7,7 @@ Prepara primero el EBOOT y los overlays según el perfil de PES. Para enlazar lo
 módulos iniciales y empaquetar en Windows:
 
 ```powershell
-python profiles/pes2013/tools/translate_overlays.py --names bootset title memorycard enter defaultdataset
+python profiles/pes2013/tools/translate_overlays.py --names bootset title memorycard enter defaultdataset select select1 formation game result league_prog
 ./profiles/pes2013/tools/build_apk.ps1
 ```
 

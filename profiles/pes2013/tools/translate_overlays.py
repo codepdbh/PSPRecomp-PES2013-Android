@@ -81,6 +81,8 @@ def main() -> None:
     selection = parser.add_mutually_exclusive_group()
     selection.add_argument("--all", action="store_true")
     selection.add_argument("--names", nargs="+")
+    parser.add_argument("--extend", action="store_true",
+                        help="Keep previously linked modules without regenerating their C++")
     parser.add_argument("--tool-directory", type=Path, default=repo / "out/pes2013-probe")
     args = parser.parse_args()
     analyzer = tool(args.tool_directory, "psp_analyze")
@@ -143,9 +145,14 @@ def main() -> None:
         results.append(result)
         print(f"{module['name']}: {result['function_seeds']} seeds, "
               f"{result['translation_units']} C++ units, {result['unsupported_occurrences']} unsupported", flush=True)
+    summary_path = profile / "analysis/overlay_codegen_summary.json"
+    if args.extend and summary_path.exists():
+        prior = json.loads(summary_path.read_text())["modules"]
+        replaced = {row["name"] for row in results}
+        results = [row for row in prior if row["name"] not in replaced] + results
     summary = {"runtime_integration_complete": False, "modules": results}
     (profile / "analysis/overlay_codegen_summary.json").write_text(json.dumps(summary, indent=2) + "\n")
-    write_bank(profile, layout["modules"], {Path(module["name"]).stem for module in modules})
+    write_bank(profile, layout["modules"], {Path(module["name"]).stem for module in results})
     print(f"Translated {len(results)} overlays; selected modules are ready to link after CMake reconfiguration")
 
 

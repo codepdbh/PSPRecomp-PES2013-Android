@@ -1,3 +1,5 @@
 # ULUS10597 EBOOT SHA-256 is checked by prepare.ps1.
 # Observed as the CRI Server Manager indirect entry during native bootstrap.
 0x08A3F110
+# Direct function pointer in math/physics model dispatcher (jalr s2)
+0x0880CF5C

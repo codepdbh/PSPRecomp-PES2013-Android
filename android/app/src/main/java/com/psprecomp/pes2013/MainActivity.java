@@ -32,8 +32,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
+            getWindow().setSustainedPerformanceMode(true);
+        }
         FrameLayout layout = new FrameLayout(this);
         screen = new SurfaceView(this);
+        screen.getHolder().setFormat(android.graphics.PixelFormat.RGBA_8888);
         screen.getHolder().addCallback(this);
         layout.addView(screen, new FrameLayout.LayoutParams(-1, -1));
         TouchControls controls = new TouchControls(this, (buttons, x, y) -> {

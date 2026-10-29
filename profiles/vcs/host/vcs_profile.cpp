@@ -8470,16 +8470,29 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             }
         }
         if (!presented_gpu_frame) {
-            holding_gpu_frame = false;
-            // The window is showing the guest framebuffer that the software GE
-            // filled.  Counting these tells whether
-            // PSPRECOMP_GE_GPU_SKIP_DISPLAYED_RASTER could ever put a stale
-            // surface on screen: the flag only skips while the swapchain is
-            // presenting, so what matters is how often the run leaves that state
-            // after having entered it.
-            ++software_presents;
-            if (gpu_has_presented) ++software_presents_after_gpu;
-            display_window_present(rt.memory(), displayed);
+            if (ge_gpu_backend_active() && gpu_has_presented) {
+                // If the GPU backend is active and has presented, hold the GPU frame
+                // instead of falling back to the 480x272 software RAM buffer, which causes
+                // severe resolution/geometry oscillation and 60Hz flickering.
+                const GeGpuBackendReport gpu = ge_gpu_backend_report();
+                const std::span<const std::byte> rgba = ge_gpu_backend_game_frame_rgba();
+                if (!rgba.empty()) {
+                    display_window_present_rgba(rgba, gpu.offscreen_width, gpu.offscreen_height);
+                    presented_gpu_frame = true;
+                }
+            }
+            if (!presented_gpu_frame) {
+                holding_gpu_frame = false;
+                // The window is showing the guest framebuffer that the software GE
+                // filled.  Counting these tells whether
+                // PSPRECOMP_GE_GPU_SKIP_DISPLAYED_RASTER could ever put a stale
+                // surface on screen: the flag only skips while the swapchain is
+                // presenting, so what matters is how often the run leaves that state
+                // after having entered it.
+                ++software_presents;
+                if (gpu_has_presented) ++software_presents_after_gpu;
+                display_window_present(rt.memory(), displayed);
+            }
         } else if (ge_gpu_backend_presents_directly()) {
             gpu_has_presented = true;
             ++swapchain_presents;

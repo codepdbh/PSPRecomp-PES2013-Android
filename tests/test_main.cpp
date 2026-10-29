@@ -1582,6 +1582,21 @@ int main() {
                     std::bit_cast<std::uint32_t>(vx2i_result[3]) == 0x7FFFFFFFu,
                 "VUC2I packed byte expansion failed");
 
+        psprecomp::AllegrexContext vi2x_context{};
+        vi2x_context.eat_vfpu_prefixes();
+        const float vi2x_inputs[4]{
+            std::bit_cast<float>(0x10101010u),
+            std::bit_cast<float>(0x20202020u),
+            std::bit_cast<float>(0x40404040u),
+            std::bit_cast<float>(0x7FFFFFFFu)
+        };
+        vi2x_context.write_vfpu_vector(vi2x_inputs, 8u, 4u);
+        vi2x_context.execute_vfpu_vi2x(4u, 8u, 4u, 0u);
+        require(vi2x_context.vfpu_scalar_bits(4u) == 0xFF804020u, "VI2UC packing failed");
+        require(psprecomp::decode_allegrex(0xD03C8080u).kind == psprecomp::OpcodeKind::Vi2x &&
+                psprecomp::decode_allegrex(0xD03C8080u).mnemonic == "vi2uc",
+                "VI2UC decode failed");
+
         vx2i_context.eat_vfpu_prefixes();
         const float preserved_vx2i[4]{1.0f, 2.0f, 3.0f, 4.0f};
         vx2i_context.write_vfpu_vector(preserved_vx2i, 0u, 4u);
