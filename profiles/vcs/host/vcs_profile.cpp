@@ -5,6 +5,9 @@
 #include "psp_power_services.hpp"
 #include "psp_umd_services.hpp"
 #include "psp_impose_services.hpp"
+#include "psp_lwmutex_services.hpp"
+#include "psp_utility_modules.hpp"
+#include "psp_alarm_services.hpp"
 #include "audio_output.hpp"
 #include "display_window.hpp"
 #include "vcs_camera_input.hpp"
@@ -424,6 +427,8 @@ struct SemaphoreRecord {
     std::int32_t count{};
     std::int32_t maximum{};
     std::vector<SemaphoreWaiter> waiters;
+    std::uint32_t attributes{};
+    std::int32_t initial_count{};
 };
 
 struct SemaphoreTable {
@@ -1299,6 +1304,7 @@ enum class AsyncReturnKind : std::uint8_t {
     SubInterrupt,
     MpegRingbuffer,
     UserCallback,
+    Alarm,
 };
 
 struct AsyncReturnFrame {
@@ -1312,6 +1318,7 @@ struct AsyncReturnFrame {
 };
 
 std::unordered_map<std::int32_t, std::vector<AsyncReturnFrame>> async_return_frames;
+std::shared_ptr<AlarmServices> alarm_services;
 
 struct DisplayState {
     std::uint32_t mode{};
@@ -3597,10 +3604,21 @@ bool start_next_guest_callback(psprecomp::AllegrexContext &ctx, bool begin_chain
 }
 
 bool maybe_start_pending_guest_callback(psprecomp::AllegrexContext &ctx) {
+    if (!kernel_cpu_interrupts_enabled()) return false;
     const auto thread = thread_table.threads.find(thread_table.current_uid);
     if (thread == thread_table.threads.end() || thread->second.state != ThreadState::Running) return false;
     const auto frames = async_return_frames.find(thread_table.current_uid);
     if (frames != async_return_frames.end() && !frames->second.empty()) return false;
+    if (alarm_services) {
+        if (const auto alarm = alarm_services->take_due()) {
+            async_return_frames[thread_table.current_uid].push_back(
+                AsyncReturnFrame{AsyncReturnKind::Alarm, ctx, 0u, 0, 0, 0, alarm->uid});
+            ctx.set_gpr(4, alarm->argument);
+            ctx.set_gpr(31, 4u);
+            ctx.pc = alarm->function;
+            return true;
+        }
+    }
     return start_next_guest_callback(ctx, true);
 }
 
@@ -5473,6 +5491,14 @@ void vcs_interrupt_return(psprecomp::Runtime &runtime, psprecomp::AllegrexContex
     }
 
     const AsyncReturnKind kind = found->second.back().kind;
+    if (kind == AsyncReturnKind::Alarm) {
+        alarm_services->complete(found->second.back().callback_uid, static_cast<std::int32_t>(ctx.gpr[2]));
+        ctx = found->second.back().resume;
+        found->second.pop_back();
+        if (found->second.empty()) async_return_frames.erase(found);
+        (void)maybe_start_pending_guest_callback(ctx);
+        return;
+    }
     if (kind == AsyncReturnKind::MpegRingbuffer) {
         if (continue_mpeg_ringbuffer_callback(runtime, ctx, found->second.back())) return;
         found->second.pop_back();
@@ -5797,7 +5823,7 @@ void io(StateArchive &ar, CallbackRecord &value) {
 }
 void io(StateArchive &ar, CallbackTable &value) { io_all(ar, value.next_uid, value.callbacks); }
 void io(StateArchive &ar, SemaphoreRecord &value) {
-    io_all(ar, value.name, value.count, value.maximum, value.waiters);
+    io_all(ar, value.name, value.count, value.maximum, value.waiters, value.attributes, value.initial_count);
 }
 void io(StateArchive &ar, SemaphoreTable &value) { io_all(ar, value.next_uid, value.semaphores); }
 void io(StateArchive &ar, EventFlagRecord &value) {
@@ -7175,7 +7201,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                 return;
             }
             const std::int32_t uid = semaphore_table.next_uid++;
-            semaphore_table.semaphores.emplace(uid, SemaphoreRecord{name, initial, maximum, {}});
+            semaphore_table.semaphores.emplace(uid, SemaphoreRecord{name, initial, maximum, {}, ctx.gpr[5], initial});
             ctx.set_gpr(2, static_cast<std::uint32_t>(uid));
         });
     runtime.register_hle("ThreadManForUser", 0x28B6489Cu,
@@ -7193,6 +7219,28 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             semaphore_table.semaphores.erase(found);
             set_success(ctx);
             (void)preempt_if_higher_priority(ctx, "semaphore-delete");
+        });
+    runtime.register_hle("ThreadManForUser", 0xBC6FEBC5u,
+        [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+            const auto found = semaphore_table.semaphores.find(static_cast<std::int32_t>(ctx.gpr[4]));
+            if (found == semaphore_table.semaphores.end()) { ctx.set_gpr(2, 0x80020199u); return; }
+            const auto address = ctx.gpr[5];
+            if (!rt.memory().raw_pointer(address, 4u)) { ctx.set_gpr(2, 0x800200D3u); return; }
+            const auto bytes = std::min(rt.memory().load32(address), 56u);
+            if (!bytes) { set_success(ctx); return; }
+            auto *output = rt.memory().raw_pointer(address, bytes);
+            if (!output) { ctx.set_gpr(2, 0x800200D3u); return; }
+            const auto &semaphore = found->second;
+            std::array<std::uint8_t, 56u> info{};
+            const auto word = [&](unsigned offset, std::uint32_t value) {
+                for (unsigned i = 0; i < 4; ++i) info[offset + i] = static_cast<std::uint8_t>(value >> (i * 8));
+            };
+            word(0, 56u);
+            std::memcpy(info.data() + 4, semaphore.name.data(), std::min(semaphore.name.size(), std::size_t{31}));
+            word(36, semaphore.attributes); word(40, semaphore.initial_count);
+            word(44, semaphore.count); word(48, semaphore.maximum);
+            word(52, static_cast<std::uint32_t>(semaphore.waiters.size()));
+            std::memcpy(output, info.data(), bytes); set_success(ctx);
         });
     runtime.register_hle("ThreadManForUser", 0x3F53E640u,
         [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
@@ -9367,6 +9415,27 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             sas_state.reverb.dry = ctx.gpr[5] != 0u; sas_state.reverb.wet = ctx.gpr[6] != 0u; set_success(ctx);
         });
 
+    runtime.register_hle("sceSasCore", 0xE175EF66u,
+        [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
+            ctx.set_gpr(2, sas_valid_core(ctx.gpr[4]) ? sas_state.output_mode : kSasErrorNotInitialized);
+        });
+    runtime.register_hle("sceSasCore", 0xE855BF76u,
+        [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
+            if (!sas_valid_core(ctx.gpr[4])) { ctx.set_gpr(2, kSasErrorNotInitialized); return; }
+            if (ctx.gpr[5] > 1u) { ctx.set_gpr(2, kSasErrorInvalidOutputMode); return; }
+            sas_state.output_mode = ctx.gpr[5]; set_success(ctx);
+        });
+    runtime.register_hle("sceSasCore", 0xBD11B7C2u,
+        [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
+            ctx.set_gpr(2, sas_valid_core(ctx.gpr[4]) ? sas_state.grain_size : kSasErrorNotInitialized);
+        });
+    runtime.register_hle("sceSasCore", 0xD1E0A01Eu,
+        [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
+            if (!sas_valid_core(ctx.gpr[4])) { ctx.set_gpr(2, kSasErrorNotInitialized); return; }
+            const auto grain = ctx.gpr[5];
+            if (grain < 0x40u || grain > 0x800u || (grain & 0x1Fu)) { ctx.set_gpr(2, kSasErrorInvalidGrain); return; }
+            sas_state.grain_size = grain; set_success(ctx);
+        });
     runtime.register_hle("sceSasCore", 0xA3589D81u,
         [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
             if (!sas_valid_core(ctx.gpr[4])) { ctx.set_gpr(2, kSasErrorNotInitialized); return; }
@@ -10681,6 +10750,14 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
     if (kTitlePes2013) {
         install_power_clock_services(runtime);
         install_impose_language_services(runtime);
+        install_utility_av_modules(runtime);
+        alarm_services = install_alarm_services(runtime, [] { return virtual_time_us; });
+        install_lwmutex_services(runtime, {
+            [] { return thread_table.current_uid; },
+            [](std::int32_t uid) { return thread_priority(uid); },
+            [](auto &rt, auto &ctx, const auto &resume) { (void)suspend_current_thread(rt, ctx, resume, "lwmutex"); },
+            [](std::int32_t uid, const auto &resume) { enqueue_continuation(uid, resume); }
+        });
         const bool medium_present = std::filesystem::is_regular_file(runtime.game_root() / "PSP_GAME/PARAM.SFO");
         install_umd_services(runtime, medium_present, {
             [](std::int32_t uid) {
@@ -10715,6 +10792,7 @@ void vcs_starvation_tick(psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) 
     virtual_time_us += starvation_tick_microseconds;
     promote_expired_delays();
     if (!kernel_cpu_interrupts_enabled()) return;
+    if (alarm_services && maybe_start_pending_guest_callback(ctx)) return;
 
     const auto current = thread_table.threads.find(thread_table.current_uid);
     if (current == thread_table.threads.end() || current->second.state != ThreadState::Running) return;

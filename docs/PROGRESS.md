@@ -10,18 +10,26 @@ PES todavía no llega al menú y no hay APK jugable.
   RWX y descubrir destinos de tablas de saltos en secciones de datos.
 - Regresión sintética del caso que faltaba en PES: destino `0x08804920`.
 - Variante de arranque con servicios PSP compartidos y parches de GTA desactivados.
-- Prueba Windows: primer hilo creado/arrancado, parámetros del sistema y servicios
-  iniciales de pantalla y GE; 45 importaciones distintas alcanzadas, 66 llamadas.
+- Pruebas Windows y S25: hilos CRI de lectura/descompresión y audio iniciados;
+  lectura de archivos CPK reales; 89 importaciones distintas alcanzadas.
 - Configuración del SDK 6.06, suspensión/restauración de interrupciones, copia y
   relleno de memoria, alias del identificador de hilo, y estado de relojes PSP.
 - Estado UMD para disco fijo: presencia, activación y entrega de notificaciones.
   La traza del juego confirma la ejecución del callback `0x0880B9B8` y el retorno
   al código que esperaba el disco en `0x0880B9A0`.
-- Tres suites locales de pruebas pasan: framework, kernel/power y UMD.
+- Cinco suites locales pasan: framework/memoria, kernel/power/alarms, UMD,
+  mutex ligeros y cambio de overlays con entradas sintéticas.
+- Mutex ligeros con propietario, recursión, cola por prioridad y borrado;
+  todavía falta la espera contendida con temporizador.
+- Alarmas con entrega al código invitado y reprogramación según su resultado.
 - Ajuste y consulta del idioma y botón de confirmación de la interfaz PSP;
   pruebas de estado independiente por ejecución y límites de buffers de salida.
-- Prueba repetida en S25 Ultra (`SM-S938B`): supera UMD e idioma y alcanza
-  la configuración inicial de controles. Coincide con el punto de parada en PC.
+- Prueba repetida en S25 Ultra (`SM-S938B`): ejecuta `bootset.ovl` y
+  `memorycard.ovl`, con cabecera y texto verificados contra los inputs AOT.
+- Descubrimiento de punteros construidos a través de bifurcaciones y sus slots;
+  referencias cruzadas desde los overlays a 3.462 entradas del EBOOT.
+- App independiente `com.psprecomp.pes2013` instalada en el S25; inicializa Vulkan
+  y AAudio, presenta controles y el indicador de carga inicial. No alcanza el menú.
 - El ejecutable diagnóstico actual compila para Windows x64 y Android ARM64.
 - 69 overlays extraídos y contrastados con las bases declaradas en el EBOOT:
   28 con texto no nulo y 41 con texto íntegramente cero.
@@ -31,26 +39,26 @@ PES todavía no llega al menú y no hay APK jugable.
 
 ## Bloqueo observado
 
-El arranque Windows termina de forma diagnóstica en
-`sceKernelCreateLwMutex` (`ThreadManForUser`, NID `0x19CFF145`, PC `0x08A85F4C`).
-Falta implementar este mecanismo de sincronización entre hilos.
+Después de ejecutar `bootset` y `memorycard`, el juego accede al scratchpad PSP
+en `0x00010000`. Esa región no estaba modelada. Se añadió su memoria separada de
+16 KB con pruebas de alias, límites, accesos AOT y escritura sin efectos parciales.
+La recompilación del corpus con este soporte y su repetición en el S25 están en curso.
 La espera UMD anterior ya se supera con el disco extraído presente y su callback.
 El modelo UMD todavía no reproduce cambios de disco ni esperas asíncronas con
 temporizador: una condición que no puede satisfacerse detiene el diagnóstico.
 
-La revisión compila para Windows y Android ARM64 y se ejecutó en ambas plataformas.
-El diagnóstico no crea una ventana ni reproduce audio; sus contadores de pantalla
-no demuestran gráficos visibles, funcionamiento de controles táctiles ni FPS jugables.
+La primera app reveló una pila nativa insuficiente. La revisión con hilo de 16 MB
+y profundidad de encadenado acotada ya supera ese cierre y llega al scratchpad.
+La pantalla y los controles de la app no prueban todavía funcionamiento en un partido
+ni permiten evaluar FPS jugables. Los APK siguen siendo artefactos locales.
 
 ## Trabajo que sigue
 
-1. Implementar los mutex ligeros solicitados por PES y validar la lectura de
-   los archivos reales después de la inicialización.
-2. Verificar cómo el cargador MWo3 coloca y cambia los overlays en ejecución.
-3. Enlazar la traducción de los overlays con el registro AOT activo. Su sintaxis
-   comprobada no valida aún su selección, enlace ni ejecución dentro de PES.
-4. Revisar las 82 ocurrencias de instrucciones no soportadas que todavía informa
-   el análisis del EBOOT; no se asume que todas sean instrucciones reales ejecutadas.
+1. Validar el scratchpad dentro del arranque real y resolver el siguiente bloqueo.
+2. Llegar al menú con los overlays bootset, memorycard, enter, title y defaultdataset.
+3. Enlazar los módulos de selección y partido, validando su cambio en ejecución.
+4. Revisar las instrucciones que fallen durante ejecución; los recuentos estáticos
+   también pueden contener datos interpretados como código.
 5. Llegar al menú y a un partido antes de evaluar gráficos, audio y rendimiento.
 
 Los ejecutables, datos y registros de las pruebas son archivos locales ignorados

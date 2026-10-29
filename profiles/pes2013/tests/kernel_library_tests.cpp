@@ -1,6 +1,8 @@
 #include "psp_kernel_library.hpp"
 #include "psp_power_services.hpp"
 #include "psp_impose_services.hpp"
+#include "psp_utility_modules.hpp"
+#include "psp_alarm_services.hpp"
 #include "psprecomp/runtime.hpp"
 
 #include <iostream>
@@ -72,6 +74,35 @@ int main() {
         rt.invoke_import("scePower", 0xFEE03A2Fu, ctx);
         require(ctx.gpr[2u] == 266u, "Invalid clock request changed the previous CPU frequency");
 
+        std::uint64_t time_us = 100u;
+        auto alarms = vcs::install_alarm_services(rt, [&] { return time_us; });
+        ctx.set_gpr(4u, 50u); ctx.set_gpr(5u, 0x08804000u); ctx.set_gpr(6u, 123u);
+        rt.invoke_import("ThreadManForUser", 0x6652B8CAu, ctx);
+        const auto alarm_uid = static_cast<std::int32_t>(ctx.gpr[2u]);
+        require(alarm_uid > 0 && !alarms->take_due(), "Alarm fired before its deadline");
+        time_us = 150u;
+        const auto alarm = alarms->take_due();
+        require(alarm && alarm->uid == alarm_uid && alarm->argument == 123u && !alarms->take_due(),
+                "Alarm arguments were lost or callback was dispatched twice");
+        alarms->complete(alarm_uid, 25);
+        time_us = 174u; require(!alarms->take_due(), "Repeated alarm fired early");
+        time_us = 175u; require(alarms->take_due().has_value(), "Positive callback result did not rearm alarm");
+        ctx.set_gpr(4u, alarm_uid);
+        rt.invoke_import("ThreadManForUser", 0x7E65B999u, ctx);
+        alarms->complete(alarm_uid, 10);
+        time_us = 200u; require(!alarms->take_due(), "Self-cancelled alarm was resurrected");
+
+        vcs::install_utility_av_modules(rt);
+        auto module = [&](std::uint32_t id, bool unload = false) {
+            ctx.set_gpr(4u, id);
+            rt.invoke_import("sceUtility", unload ? 0xE49BFE92u : 0x2A2B3DE0u, ctx);
+            return ctx.gpr[2u];
+        };
+        require(module(0x302u) == 0x8002013Cu, "ATRAC module ignored codec dependency");
+        require(module(0x300u) == 0u && module(0x302u) == 0u, "Available codec modules failed to load");
+        require(module(0x302u) == 0x80111102u, "Duplicate module load was accepted");
+        require(module(0x302u, true) == 0u && module(0x302u, true) == 0x80111103u,
+                "Module unload state was not preserved");
         vcs::install_impose_language_services(rt);
         ctx.set_gpr(4u, 3u); ctx.set_gpr(5u, 0u);
         rt.invoke_import("sceImpose", 0x36AA6E91u, ctx);

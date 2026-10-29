@@ -156,28 +156,36 @@ límites de memoria, alias de VRAM, y peticiones válidas e inválidas de frecue
 El framework también tiene una regresión sintética de tablas de saltos en `.rodata`
 dentro de un segmento RWX, el caso que bloqueaba PES en `0x08804920`.
 
-La prueba Windows con el EBOOT regenerado registra 138.368 entradas AOT y
-alcanza 45 servicios distintos (66 llamadas), incluida la inicialización de
+Las pruebas Windows y S25 con el EBOOT regenerado alcanzan 89 servicios distintos,
+incluida la inicialización de
 pantalla y GE. El estado UMD del disco montado permite superar la espera inicial:
 la traza confirma que se ejecuta el callback del juego en `0x0880B9B8` y se
 restaura su contexto para continuar en `0x0880B9A0`.
 El ajuste de idioma y botón de confirmación ya conserva el estado solicitado
-por el juego. Su punto de detención actual es
-`ThreadManForUser::sceKernelCreateLwMutex` (`0x19CFF145`, PC `0x08A85F4C`).
+por el juego. Los mutex ligeros y alarmas permiten arrancar los hilos CRI y de
+audio. El cargador del juego lee los CPK, descomprime los módulos y ejecuta
+`bootset.ovl` y `memorycard.ovl` mediante el banco AOT.
+El bloqueo observado después es un acceso al scratchpad PSP (`0x00010000`):
+su soporte tiene pruebas locales y está pendiente de comprobar en el juego.
+El estado actualizado de la ejecución está en [PROGRESS](../../docs/PROGRESS.md).
 Todavía no se alcanza el menú.
 
 `pes2013_umd_tests` comprueba presencia del medio, máscaras de espera,
 notificaciones y cesión del contexto al callback. El modelo se limita a disco
 fijo: no reproduce cambios de medio ni temporizadores de esperas pendientes.
 Si una condición no se cumple, detiene el diagnóstico en vez de declarar éxito.
-Estos cambios se comprobaron en PC y en el S25 Ultra conectado por ADB: ambos
-alcanzan la misma detención. Esta es una prueba sin ventana y sin audio;
-no valida todavía gráficos visibles, controles táctiles ni rendimiento jugable.
+El diagnóstico sin ventana sigue disponible para ADB y Windows. La
+[app Android](../../android/README.md) añade presentación Vulkan, AAudio y
+controles; está instalada para pruebas en el S25, pero aún no permite jugar.
+Las pruebas sintéticas también cubren propiedad/recursión de mutex, alarmas,
+selección de overlays y eliminación de registros de código anteriores.
 
 Referencias de nombres y NIDs para las implementaciones independientes:
 [Kernel/Interrupts](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/sceKernelInterrupt.cpp),
 [Power](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/scePower.cpp),
 [Idioma de interfaz PSP](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/sceImpose.cpp),
+[Mutex ligeros](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/sceKernelMutex.cpp),
+[Alarmas](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/sceKernelAlarm.cpp),
 [UMD API](https://github.com/pspdev/pspsdk/blob/master/src/umd/pspumd.h),
 [UMD y callbacks](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/sceUmd.cpp).
 

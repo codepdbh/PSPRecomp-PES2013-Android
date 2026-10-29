@@ -38,6 +38,10 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'PES executable analysis failed.' }
     & $python.Source (Join-Path $PSScriptRoot 'extract_overlays.py')
     if ($LASTEXITCODE -ne 0) { throw 'PES overlay extraction failed.' }
+    & $python.Source (Join-Path $PSScriptRoot 'prepare_overlay_elf.py')
+    if ($LASTEXITCODE -ne 0) { throw 'PES overlay ELF preparation failed.' }
+    & $python.Source (Join-Path $PSScriptRoot 'collect_overlay_entries.py')
+    if ($LASTEXITCODE -ne 0) { throw 'PES cross-module entry collection failed.' }
     & $python.Source (Join-Path $PSScriptRoot 'audit.py')
     if ($LASTEXITCODE -ne 0) { throw 'PES portability audit failed.' }
     if (-not $SkipCodegen) {
@@ -48,7 +52,9 @@ try {
         $savedPreference = $ErrorActionPreference
         try {
             $ErrorActionPreference = 'Continue'
-            & $generator $elf --auto (Join-Path $profile 'generated') $identity.load_base $identity.unit_span_bytes --generic 2>&1 |
+            $extraEntries = @("--entries-file=$(Join-Path $profile 'entry_points.txt')",
+                "--entries-file=$(Join-Path $profile 'analysis/overlay_eboot_entries.txt')")
+            & $generator $elf --auto (Join-Path $profile 'generated') $identity.load_base $identity.unit_span_bytes --generic @extraEntries 2>&1 |
                 ForEach-Object { $_.ToString() }
             $generationExit = $LASTEXITCODE
         } finally {

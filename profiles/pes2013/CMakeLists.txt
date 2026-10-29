@@ -3,7 +3,14 @@ add_executable(pes2013_recomp ../vcs/tools/vcs_codegen_main.cpp)
 target_link_libraries(pes2013_recomp PRIVATE psprecomp_core)
 target_compile_definitions(pes2013_recomp PRIVATE PSPRECOMP_GENERIC_CODEGEN=1)
 
-add_library(pes2013_kernel_library STATIC ../vcs/host/psp_kernel_library.cpp ../vcs/host/psp_power_services.cpp ../vcs/host/psp_umd_services.cpp ../vcs/host/psp_impose_services.cpp)
+add_library(pes2013_kernel_library STATIC
+    ../vcs/host/psp_kernel_library.cpp
+    ../vcs/host/psp_power_services.cpp
+    ../vcs/host/psp_umd_services.cpp
+    ../vcs/host/psp_impose_services.cpp
+    ../vcs/host/psp_lwmutex_services.cpp
+    ../vcs/host/psp_utility_modules.cpp
+    ../vcs/host/psp_alarm_services.cpp)
 target_include_directories(pes2013_kernel_library PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../vcs/host")
 target_link_libraries(pes2013_kernel_library PUBLIC psprecomp_core)
 set_target_properties(pes2013_kernel_library PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -14,6 +21,13 @@ if(PSPRECOMP_BUILD_TESTS AND PSPRECOMP_BUILD_PROFILE_TESTS)
     add_executable(pes2013_umd_tests tests/umd_services_tests.cpp)
     target_link_libraries(pes2013_umd_tests PRIVATE pes2013_kernel_library)
     add_test(NAME pes2013_umd_tests COMMAND pes2013_umd_tests)
+    add_executable(pes2013_lwmutex_tests tests/lwmutex_tests.cpp)
+    target_link_libraries(pes2013_lwmutex_tests PRIVATE pes2013_kernel_library)
+    add_test(NAME pes2013_lwmutex_tests COMMAND pes2013_lwmutex_tests)
+    add_executable(pes2013_overlay_tests tests/overlay_bank_tests.cpp host/overlay_bank.cpp)
+    target_include_directories(pes2013_overlay_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/host")
+    target_link_libraries(pes2013_overlay_tests PRIVATE psprecomp_core)
+    add_test(NAME pes2013_overlay_tests COMMAND pes2013_overlay_tests)
 endif()
 
 # A clean checkout can build the tools before local game inputs are supplied.
@@ -40,6 +54,18 @@ endif()
 
 add_executable(pes2013_probe host/probe_main.cpp)
 target_link_libraries(pes2013_probe PRIVATE pes2013_aot)
+include("${CMAKE_CURRENT_SOURCE_DIR}/analysis/overlay_codegen/linked_overlays.cmake" OPTIONAL)
+if(PES2013_OVERLAY_SOURCES)
+    add_library(pes2013_overlays STATIC host/overlay_bank.cpp ${PES2013_OVERLAY_SOURCES})
+    target_include_directories(pes2013_overlays PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/host")
+    target_link_libraries(pes2013_overlays PUBLIC psprecomp_core)
+    set_target_properties(pes2013_overlays PROPERTIES POSITION_INDEPENDENT_CODE ON)
+    if(MSVC)
+        target_compile_options(pes2013_overlays PRIVATE /bigobj /Od /Ob0 /W0 ${PSPRECOMP_MSVC_MP_FLAG})
+    else()
+        target_compile_options(pes2013_overlays PRIVATE -O0 -g0 -w)
+    endif()
+endif()
 if(ANDROID)
     target_link_libraries(pes2013_probe PRIVATE log)
 endif()
@@ -94,6 +120,14 @@ if(ANDROID OR (WIN32 AND PSPRECOMP_PES2013_WINDOWS_HOST_PROBE))
     set_target_properties(pes2013_shared_host PROPERTIES POSITION_INDEPENDENT_CODE ON)
     add_executable(pes2013_host_probe host/probe_main.cpp)
     target_link_libraries(pes2013_host_probe PRIVATE pes2013_aot pes2013_shared_host)
+    if(TARGET pes2013_overlays)
+        target_link_libraries(pes2013_host_probe PRIVATE pes2013_overlays)
+        target_compile_definitions(pes2013_host_probe PRIVATE PSPRECOMP_PES2013_OVERLAYS=1)
+        if(ANDROID)
+            add_library(pes2013_android SHARED host/android_main.cpp)
+            target_link_libraries(pes2013_android PRIVATE pes2013_aot pes2013_shared_host pes2013_overlays)
+        endif()
+    endif()
     target_compile_definitions(pes2013_host_probe PRIVATE PSPRECOMP_PES2013_SHARED_HOST=1
         PES2013_EXPECTED_SHA256="5ab84864354b3ee32cf4dbb1a7e0bb0fc914d63b0f25cddfa387af35e09a14db")
     if(WIN32)

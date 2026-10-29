@@ -71,6 +71,51 @@ static void chained_switch_context(psprecomp::Runtime &, psprecomp::AllegrexCont
     ctx.pc = 0x08804120u;
 }
 
+static void test_psp_scratchpad() {
+    psprecomp::GuestMemory memory;
+    constexpr auto start = psprecomp::GuestMemory::kScratchpadBase;
+    constexpr auto end = start + psprecomp::GuestMemory::kScratchpadSize;
+    require(memory.contains(start, 0x4000u) && !memory.contains(start - 1u, 1u) &&
+            !memory.contains(end, 1u) && !memory.contains(end - 1u, 2u), "Scratchpad bounds incorrect");
+    auto view = memory.aot_fast_view();
+    view.aot_store32(start, 0x12345678u);
+    require(memory.load32(start) == 0x12345678u && view.aot_load32(0x40010000u) == 0x12345678u,
+            "AOT scratchpad and uncached alias do not share storage");
+    view.aot_store16(end - 2u, 0xABCDu);
+    require(view.aot_load16(end - 2u) == 0xABCDu, "Last scratchpad halfword failed");
+    require(memory.raw_pointer(start, 0x4000u) != nullptr && memory.raw_pointer(end - 2u, 4u) == nullptr,
+            "Scratchpad raw pointer crossed its boundary");
+    memory.zero(start, 0x4000u);
+    require(memory.load32(start) == 0u && memory.load16(end - 2u) == 0u, "Scratchpad zero did not cover full region");
+    memory.store32(0x08810000u, 0xDEADBEEFu);
+    require(memory.load32(start) == 0u, "Scratchpad aliases ordinary RAM");
+    bool rejected = false;
+    try { view.aot_store32(end - 2u, 0x12345678u); } catch (const std::exception &) { rejected = true; }
+    require(rejected && memory.load16(end - 2u) == 0u, "Cross-boundary AOT scratchpad store was accepted or partially written");
+}
+
+static void test_overlay_dispatch_resolution() {
+    psprecomp::Runtime rt;
+    rt.register_generated_unit(0u, 0x08804000u, 0x4000u, &chained_same_context);
+    rt.register_function(0x08804100u, &chained_same_context, "recomp_unit_old");
+    rt.register_function(0x08804000u, &chained_same_context, "recomp_unit_neighbor");
+    rt.unregister_functions(0x08804100u, 0x08804104u);
+    require(!rt.has_function(0x08804100u) && !rt.has_function(0x48804100u),
+            "Overlay unload left an exact or alias function registration");
+    require(rt.has_function(0x08804000u), "Overlay unload removed neighboring code");
+    psprecomp::AllegrexContext ctx{}; ctx.pc = 0x08804100u;
+    require(!rt.invoke_chained_unit(ctx, 0u), "Overlay unload retained a stale dense unit");
+    unsigned resolutions = 0;
+    rt.set_code_resolver([&](auto &runtime, std::uint32_t pc) {
+        ++resolutions;
+        if (pc == 0x08804100u)
+            runtime.register_function(pc, +[](psprecomp::Runtime &r, psprecomp::AllegrexContext &) { r.stop("overlay executed"); }, "overlay_test");
+    });
+    rt.run(0x08804100u, 4u);
+    require(resolutions == 1u && rt.stop_reason() == "overlay executed",
+            "Resolver was not called before looking up a newly loaded overlay");
+}
+
 static void test_chained_call_context_guard() {
     psprecomp::Runtime runtime;
     runtime.register_function(0x08804100u, &chained_same_context, "recomp_unit_chain_same");
@@ -654,6 +699,33 @@ static void test_jump_table_in_rwx_segment() {
     require(!psprecomp::is_executable_address(program.executable_ranges, 0x08804030u),
             "Non-executable allocated section was treated as Allegrex code");
     require(!program.seeds.contains(0x08804030u), "Data pointer was incorrectly registered as code");
+    const auto explicit_program = psprecomp::analyze_program(elf, memory,
+        psprecomp::kDefaultPspUserLoadBase, 131072u, {0x08804028u});
+    require(explicit_program.covered_entry_labels.contains(0x08804028u),
+            "Runtime-discovered explicit code entry was not translated");
+    bool rejected_data = false;
+    try {
+        (void)psprecomp::analyze_program(elf, memory,
+            psprecomp::kDefaultPspUserLoadBase, 131072u, {0x08804030u});
+    } catch (const std::exception &) { rejected_data = true; }
+    require(rejected_data, "Explicit entry in non-executable data was accepted");
+}
+
+static void test_branch_derived_function_pointers() {
+    auto bytes = make_function_pointer_test_elf();
+    const std::uint32_t code[] = {
+        0x50800004u, 0x3C020880u, // beql a0,zero,+4; lui v0,0x0880 in taken-only slot
+        0x3C020880u, 0x10000002u, // other path: lui; b to join
+        0x24424020u, 0x24424028u, // delay: pointer 20; taken path: pointer 28
+        0x03E00008u, 0u, 0x03E00008u, 0u, 0x03E00008u, 0u
+    };
+    for (std::size_t i = 0; i < std::size(code); ++i) put32(bytes, 0x80u + i * 4u, code[i]);
+    auto elf = psprecomp::Elf32Image::from_bytes(std::move(bytes), "branch_callback.elf");
+    psprecomp::GuestMemory memory;
+    (void)elf.load_and_relocate(memory);
+    const auto program = psprecomp::analyze_program(elf, memory, psprecomp::kDefaultPspUserLoadBase);
+    require(program.seeds.contains(0x08804020u) && program.seeds.contains(0x08804028u),
+            "Function pointers assembled across a likely-branch join were missed");
 }
 
 static void test_vfpu_branch_cfg_discovery() {
@@ -836,6 +908,8 @@ int main() {
     try {
         test_import_return_context_guard();
         test_chained_call_context_guard();
+        test_overlay_dispatch_resolution();
+        test_psp_scratchpad();
         test_nested_direct_chain_context_guard();
 
         psprecomp::GuestMemory mem;
@@ -1676,6 +1750,7 @@ int main() {
         test_automatic_cross_unit_tail_chaining();
         test_materialized_function_pointer_discovery();
         test_jump_table_in_rwx_segment();
+        test_branch_derived_function_pointers();
 
         auto relocation_elf = psprecomp::Elf32Image::from_bytes(make_relocation_test_prx(), "synthetic_relocation.prx");
         psprecomp::GuestMemory relocation_memory;

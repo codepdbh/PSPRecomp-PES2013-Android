@@ -1,4 +1,5 @@
 #include "psprecomp/program_analysis.hpp"
+#include "psprecomp/common.hpp"
 
 #include "psprecomp/decoder.hpp"
 
@@ -255,7 +256,7 @@ void collect_materialized_code_pointers(const GuestMemory &memory,
     // Function pointers are frequently assembled immediately before an API call,
     // including in the call's delay slot. A global block boundary can split the
     // LUI from that final ADDIU/ORI when the surrounding code has overlapping
-    // entry points. Scan a short straight-line window from every LUI as a
+    // entry points. Scan a bounded control-flow window from every LUI as a
     // conservative, architecture-wide supplement. Only values inside executable
     // ranges become seeds, so data addresses and ordinary constants are ignored.
     for (const auto &range : ranges) {
@@ -265,19 +266,43 @@ void collect_materialized_code_pointers(const GuestMemory &memory,
 
             ConstantState constants{};
             clear_all_constants(constants);
-            std::uint32_t pc = start;
-            for (std::size_t count = 0; count < 24u && is_executable_address(ranges, pc); ++count) {
-                const auto decoded = decode_allegrex(memory.load32(pc));
-                propagate_constant(decoded, pc, constants, seeds, ranges);
-                if (decoded.has_delay_slot()) {
-                    if (is_executable_address(ranges, pc + 4u)) {
-                        const auto slot = decode_allegrex(memory.load32(pc + 4u));
-                        propagate_constant(slot, pc + 4u, constants, seeds, ranges);
+            struct Path { std::uint32_t pc; ConstantState constants; unsigned depth; };
+            // A LUI in a likely-branch delay slot executes on the taken path,
+            // whose ADDIU can live beyond an unconditional jump in the other path.
+            const auto begin = start >= range.start + 4u &&
+                is_conditional_branch(decode_allegrex(memory.load32(start - 4u)).kind) ? start - 4u : start;
+            std::vector<Path> pending{{begin, constants, 0u}};
+            unsigned budget = 128u;
+            while (!pending.empty() && budget) {
+                auto path = pending.back(); pending.pop_back();
+                auto pc = path.pc; constants = path.constants;
+                for (unsigned depth = path.depth; depth < 24u && budget && is_executable_address(ranges, pc); ++depth) {
+                    --budget;
+                    const auto decoded = decode_allegrex(memory.load32(pc));
+                    propagate_constant(decoded, pc, constants, seeds, ranges);
+                    if (decoded.has_delay_slot()) {
+                        const auto before_slot = constants;
+                        if (is_executable_address(ranges, pc + 4u))
+                            propagate_constant(decode_allegrex(memory.load32(pc + 4u)), pc + 4u, constants, seeds, ranges);
+                        if (is_conditional_branch(decoded.kind)) {
+                            bool likely = false;
+                            switch (decoded.kind) {
+                            case OpcodeKind::Beql: case OpcodeKind::Bnel: case OpcodeKind::Blezl: case OpcodeKind::Bgtzl:
+                            case OpcodeKind::Bltzl: case OpcodeKind::Bgezl: case OpcodeKind::Bltzall: case OpcodeKind::Bgezall:
+                            case OpcodeKind::Bc1fl: case OpcodeKind::Bc1tl: case OpcodeKind::Bvfl: case OpcodeKind::Bvtl:
+                                likely = true; break;
+                            default: break;
+                            }
+                            pending.push_back({branch_target(pc, decoded), constants, depth + 2u});
+                            pending.push_back({pc + 8u, likely ? before_slot : constants, depth + 2u});
+                        } else if (decoded.kind == OpcodeKind::J) {
+                            pending.push_back({direct_jump_target(pc, decoded), constants, depth + 2u});
+                        }
+                        break;
                     }
-                    break;
+                    if (decoded.is_control_flow()) break;
+                    pc += 4u;
                 }
-                if (decoded.is_control_flow()) break;
-                pc += 4u;
             }
         }
     }
@@ -432,10 +457,16 @@ bool is_executable_address(const std::vector<ExecutableRange> &ranges, std::uint
 ProgramAnalysis analyze_program(const Elf32Image &elf,
                                 const GuestMemory &memory,
                                 std::uint32_t load_base,
-                                std::size_t max_instructions_per_function) {
+                                std::size_t max_instructions_per_function,
+                                const std::vector<std::uint32_t> &extra_entries) {
     ProgramAnalysis program{};
     program.executable_ranges = executable_ranges_for(elf, load_base);
     program.seeds = collect_initial_seeds(elf, memory, load_base, program.executable_ranges);
+    for (const auto entry : extra_entries) {
+        if (!is_executable_address(program.executable_ranges, entry))
+            throw Error("Explicit entry is outside executable ranges: " + hex32(entry));
+        program.seeds.try_emplace(entry, "explicit_entry");
+    }
     program.functions.reserve(program.seeds.size());
 
     std::unordered_map<std::uint32_t, std::size_t> label_owners;

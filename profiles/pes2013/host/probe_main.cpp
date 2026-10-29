@@ -4,9 +4,13 @@
 #include "psprecomp/sha256.hpp"
 
 #include <cstdint>
+#include <cstdlib>
 #include <filesystem>
 #include <iostream>
 #include <memory>
+#if defined(PSPRECOMP_PES2013_OVERLAYS)
+#include "overlay_bank.hpp"
+#endif
 
 #if defined(PSPRECOMP_PES2013_SHARED_HOST)
 #include "vcs_config.hpp"
@@ -68,6 +72,13 @@ int main(int argc, char **argv) {
         if (hash != PES2013_EXPECTED_SHA256)
             throw psprecomp::Error("Executable does not match the ULUS10597 PES profile");
         auto image = psprecomp::Elf32Image::from_file(executable);
+        if (!std::getenv("PSPRECOMP_CHAIN_DEPTH")) {
+#if defined(_WIN32)
+            _putenv_s("PSPRECOMP_CHAIN_DEPTH", "8");
+#else
+            setenv("PSPRECOMP_CHAIN_DEPTH", "8", 0);
+#endif
+        }
         auto runtime = std::make_unique<psprecomp::Runtime>(32u * 1024u * 1024u);
         runtime->set_game_root(root);
         const auto relocations = image.load_and_relocate(
@@ -78,6 +89,9 @@ int main(int argc, char **argv) {
             runtime->memory(), psprecomp::kDefaultPspUserLoadBase);
         if (!module) throw psprecomp::Error("PES module information was not found");
         psprecomp::register_generated_functions(*runtime);
+#if defined(PSPRECOMP_PES2013_OVERLAYS)
+        pes2013::install_overlay_bank(*runtime);
+#endif
 #if defined(PSPRECOMP_PES2013_SHARED_HOST)
         const auto app_data = root / "probe-state";
         std::filesystem::create_directories(app_data);
@@ -120,7 +134,13 @@ int main(int argc, char **argv) {
 #if defined(PSPRECOMP_PES2013_SHARED_HOST)
         RuntimeWatchdog watchdog(*runtime);
 #endif
-        runtime->run(image.runtime_entry(), 100000u);
+        bool execution_failed = false;
+        try {
+            runtime->run(image.runtime_entry(), 100000u);
+        } catch (const std::exception &error) {
+            execution_failed = true;
+            runtime->stop(std::string("Execution error: ") + error.what());
+        }
 #if defined(PSPRECOMP_PES2013_SHARED_HOST)
         if (watchdog.expired()) runtime->stop("Host bootstrap watchdog expired after 20 seconds");
 #endif
@@ -132,10 +152,22 @@ int main(int argc, char **argv) {
         vcs::report_present_stats();
         vcs::audio_output_shutdown();
         vcs::shutdown_ge_gpu_backend();
+        if (std::getenv("PSPRECOMP_DUMP_GUEST") != nullptr) {
+            const auto dump = app_data / "ram.bin";
+            const auto size = runtime->memory().size();
+            const auto *bytes = runtime->memory().raw_pointer(psprecomp::GuestMemory::kPhysicalBase, size);
+            if (!bytes) throw psprecomp::Error("Cannot access guest RAM for diagnostic dump");
+            std::ofstream output(dump, std::ios::binary | std::ios::trunc);
+            output.write(reinterpret_cast<const char *>(bytes), size);
+            if (!output) throw psprecomp::Error("Cannot write diagnostic RAM dump");
+            std::cout << "Guest RAM dump: " << dump.string() << '\n';
+            for (unsigned index = 0; index < 32; ++index)
+                std::cout << "r" << index << "=" << psprecomp::hex32(cpu.gpr[index]) << (index % 4 == 3 ? '\n' : ' ');
+        }
 #endif
         // An unimplemented service is the expected diagnostic result, not a
         // successful game boot. Preserve that distinction in the exit status.
-        return 3;
+        return execution_failed ? 1 : 3;
     } catch (const std::exception &error) {
         std::cerr << "PES bootstrap error: " << error.what() << '\n';
         return 1;

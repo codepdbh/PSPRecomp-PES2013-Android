@@ -246,6 +246,10 @@ public:
     void register_generated_unit(std::uint32_t unit_index, std::uint32_t unit_address,
                                  std::uint32_t unit_span, RecompiledFunction function,
                                  RecompiledEntryFunction entry_function = nullptr);
+    // AOT overlay profiles resolve the active module before an outer dispatch.
+    // The resolver only selects precompiled code; it never translates at runtime.
+    void set_code_resolver(std::function<void(Runtime &, std::uint32_t)> resolver) { code_resolver_ = std::move(resolver); }
+    void unregister_functions(std::uint32_t begin, std::uint32_t end);
     [[nodiscard]] std::uint64_t dispatch_work_count() const noexcept { return dispatch_work_count_; }
 
     AllegrexContext &cpu() noexcept;
@@ -258,6 +262,7 @@ public:
     void report_hle_histogram(std::size_t limit = 25u) const;
 
 private:
+    std::function<void(Runtime &, std::uint32_t)> code_resolver_;
     struct FunctionEntry {
         RecompiledFunction function{};
         std::string name;

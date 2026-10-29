@@ -14,7 +14,8 @@ hacia código nativo, con Android ARM64 como plataforma objetivo.
 
 > **Todavía no es jugable.** El arranque traducido ya se ejecutó en PC y en un
 > Samsung Galaxy S25 Ultra. Seguimos trabajando en los servicios de PSP y los
-> módulos de código que el juego carga durante la ejecución. No hay APK ni releases.
+> módulos de código que el juego carga durante la ejecución. Existe una app de
+> desarrollo local para pruebas; no hay APK publicado ni releases.
 
 ## Avance comprobado
 
@@ -23,12 +24,12 @@ hacia código nativo, con Android ARM64 como plataforma objetivo.
 | Copia analizada | PSP USA, `ULUS10597` |
 | EBOOT traducido | 161 unidades C++; análisis de tablas de saltos corregido |
 | Compilación nativa | Windows x64 y Android ARM64 |
-| Prueba en S25 Ultra | Supera UMD e idioma; alcanza la creación de un mutex ligero |
+| Prueba en S25 Ultra | Ejecuta `bootset` y `memorycard`; app de desarrollo instalada |
 | Módulos `.ovl` | 69 extraídos; 28 con código, 41 con texto vacío |
 | Traducción experimental de overlays | 576 unidades C++; 604 archivos comprobados para ARM64 |
-| Servicios de arranque | SDK, interrupciones, memoria, relojes y UMD con callback ejecutado en PC |
+| Servicios de arranque | UMD, mutex ligeros, alarmas, SAS y lectura de archivos CPK |
 | Menú y partidos | Pendientes |
-| Vulkan, audio y controles | Integración pendiente en PES |
+| Vulkan, audio y controles | Base de app conectada; validación en juego pendiente |
 
 Los detalles técnicos y los límites de cada prueba están en el
 [perfil de PES](profiles/pes2013/README.md).
@@ -94,12 +95,13 @@ Las instrucciones de compilación ARM64 están en el [perfil](profiles/pes2013/R
 - [x] Traducir los 28 overlays con código a espacios de nombres separados.
 - [x] Comprobar la sintaxis ARM64 de esos archivos C++.
 - [ ] Integrar los servicios de arranque de PSP.
-- [ ] Verificar y traducir el cargador de overlays.
+- [x] Verificar la carga y ejecutar el primer overlay traducido.
 - [ ] Llegar al menú y a un partido.
 - [ ] Integrar y validar Vulkan, audio y controles en una app independiente.
 
-La traducción de overlays aún no está enlazada con el cargador del juego. Los
-avances de compilación no equivalen a que el menú o un partido funcionen.
+El banco AOT selecciona el módulo presente en RAM y comprueba su cabecera y código.
+Hay cinco módulos de arranque enlazados; aún faltan módulos y servicios para jugar.
+Los avances de compilación no equivalen a que el menú o un partido funcionen.
 
 ## Datos y licencias
 

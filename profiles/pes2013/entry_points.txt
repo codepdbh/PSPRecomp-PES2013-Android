@@ -1,0 +1,3 @@
+# ULUS10597 EBOOT SHA-256 is checked by prepare.ps1.
+# Observed as the CRI Server Manager indirect entry during native bootstrap.
+0x08A3F110

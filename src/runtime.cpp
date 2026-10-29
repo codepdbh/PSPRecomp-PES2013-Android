@@ -464,6 +464,26 @@ Runtime::RecompiledFunction Runtime::lookup_function(std::uint32_t address) cons
     return found != functions_.end() ? found->second.function : nullptr;
 }
 
+void Runtime::unregister_functions(std::uint32_t begin, std::uint32_t end) {
+    if ((begin & 3u) || (end & 3u)) throw Error("Unaligned code-unregistration range");
+    begin = memory_.canonical(begin); end = memory_.canonical(end);
+    if (end <= begin) throw Error("Invalid code-unregistration range");
+    std::erase_if(functions_, [&](const auto &item) {
+        const auto address = memory_.canonical(item.first);
+        return address >= begin && address < end;
+    });
+    for (std::uint64_t address = begin; address < end; address += 4u) {
+        if (address < direct_base_) continue;
+        const auto index = static_cast<std::size_t>(address - direct_base_) / 4u;
+        if (index >= direct_functions_.size()) break;
+        direct_functions_[index] = nullptr; direct_chainable_[index] = nullptr;
+    }
+    // Mixed overlay layouts require exact per-PC dispatch. In particular no
+    // compile-time unit chain may retain a pointer into the unloaded module.
+    generated_units_.fill(nullptr); generated_unit_entries_.fill(nullptr);
+    generated_unit_disabled_.fill(0u); generated_unit_layout_valid_ = false;
+}
+
 Runtime::RecompiledFunction Runtime::lookup_generated_unit(std::uint32_t address) const noexcept {
     if (!generated_unit_layout_valid_ || generated_unit_span_ == 0u) return nullptr;
     const std::uint32_t c = memory_.canonical(address);
@@ -583,6 +603,8 @@ void Runtime::run(std::uint32_t entry, std::uint64_t max_dispatches) {
             const std::uint32_t before = cpu_.pc;
             chain_context_invalidated_ = false;
             const std::int32_t dispatch_thread_uid = g_runtime_thread_uid;
+            if (code_resolver_) code_resolver_(*this, before);
+            if (stopped_) return;
             RecompiledFunction function = lookup_function(before);
             if (function == nullptr) {
                 stop("No recompiled function registered at " + hex32(before));
@@ -659,6 +681,8 @@ void Runtime::run(std::uint32_t entry, std::uint64_t max_dispatches) {
             // cost a cache/TLB miss at every outer return.  Any unit containing
             // a host/import override is poisoned at registration and falls
             // back to exact per-PC dispatch automatically.
+            if (code_resolver_) code_resolver_(*this, before);
+            if (stopped_) break;
             RecompiledFunction function = lookup_generated_unit(before);
             if (function == nullptr) function = lookup_function(before);
             if (function == nullptr) {
@@ -718,6 +742,8 @@ void Runtime::run(std::uint32_t entry, std::uint64_t max_dispatches) {
         if (profile_dispatch) ++dispatch_counts[cpu_.pc];
         const std::uint32_t before = cpu_.pc;
         chain_context_invalidated_ = false;
+        if (code_resolver_) code_resolver_(*this, before);
+        if (stopped_) break;
         RecompiledFunction function = lookup_function(before);
         const FunctionEntry *function_entry = lookup_entry(before);
         if (function == nullptr) {

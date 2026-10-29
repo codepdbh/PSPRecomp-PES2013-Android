@@ -70,7 +70,8 @@ void log_write_watch(std::uint32_t address, std::size_t length, const char *oper
 }
 
 GuestMemory::GuestMemory(std::uint32_t size_bytes)
-    : vram_(kVramSize, 0u), bytes_(size_bytes, 0u), write_watch_enabled_(std::getenv("PSPRECOMP_WATCH_WRITE") != nullptr) {
+    : vram_(kVramSize, 0u), bytes_(size_bytes, 0u), scratchpad_(kScratchpadSize, 0u),
+      write_watch_enabled_(std::getenv("PSPRECOMP_WATCH_WRITE") != nullptr) {
     if (size_bytes != 32u * 1024u * 1024u && size_bytes != 64u * 1024u * 1024u) {
         throw Error("PSP RAM size must be 32 MiB or 64 MiB");
     }
@@ -97,6 +98,8 @@ std::size_t GuestMemory::vram_offset(std::uint32_t canonical_address) const noex
 bool GuestMemory::contains(std::uint32_t address, std::size_t length) const noexcept {
     const std::uint32_t c = canonical(address);
     const std::uint64_t end = static_cast<std::uint64_t>(c) + static_cast<std::uint64_t>(length);
+    if (c >= kScratchpadBase && end <= static_cast<std::uint64_t>(kScratchpadBase) + kScratchpadSize)
+        return true;
     if (is_vram_window(c) && end <= static_cast<std::uint64_t>(kVramPhysicalBase) + kVramAddressSpan)
         return true;
     if (c >= kPhysicalBase && end <= static_cast<std::uint64_t>(kPhysicalBase) + bytes_.size())
@@ -109,15 +112,19 @@ GuestMemory::ResolvedAddress GuestMemory::resolve(std::uint32_t address, std::si
         throw Error("Guest memory access outside PSP RAM/EDRAM at " + hex32(address));
     }
     const std::uint32_t c = canonical(address);
+    if (c >= kScratchpadBase && c < kScratchpadBase + kScratchpadSize)
+        return {Region::Scratchpad, static_cast<std::size_t>(c - kScratchpadBase)};
     if (is_vram_window(c))
         return {Region::Vram, vram_offset(c)};
     return {Region::Ram, static_cast<std::size_t>(c - kPhysicalBase)};
 }
 
 const std::vector<std::uint8_t> &GuestMemory::region_bytes(Region region) const noexcept {
+    if (region == Region::Scratchpad) return scratchpad_;
     return region == Region::Vram ? vram_ : bytes_;
 }
 std::vector<std::uint8_t> &GuestMemory::region_bytes(Region region) noexcept {
+    if (region == Region::Scratchpad) return scratchpad_;
     return region == Region::Vram ? vram_ : bytes_;
 }
 
@@ -292,6 +299,10 @@ std::uint8_t *GuestMemory::raw_pointer(std::uint32_t address, std::size_t length
 
 const std::uint8_t *GuestMemory::raw_pointer(std::uint32_t address, std::size_t length) const noexcept {
     const std::uint32_t c = canonical(address);
+    if (c >= kScratchpadBase && c < kScratchpadBase + kScratchpadSize) {
+        const std::size_t offset = c - kScratchpadBase;
+        return length <= scratchpad_.size() - offset ? scratchpad_.data() + offset : nullptr;
+    }
     if (is_vram_window(c)) {
         const std::size_t offset = vram_offset(c);
         // A run that would wrap past the end of the 2 MiB EDRAM image is not

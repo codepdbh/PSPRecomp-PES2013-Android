@@ -1551,7 +1551,8 @@ bool write_text_if_changed(const std::filesystem::path &path, const std::string 
 int generate_auto(const std::filesystem::path &elf_path,
                   const std::filesystem::path &output_dir,
                   std::uint32_t load_base,
-                  std::uint32_t unit_span_bytes) {
+                  std::uint32_t unit_span_bytes,
+                  const std::vector<std::uint32_t> &extra_entries) {
     const auto elf = psprecomp::Elf32Image::from_file(elf_path);
     psprecomp::GuestMemory memory;
     (void)elf.load_and_relocate(memory, load_base);
@@ -1559,7 +1560,7 @@ int generate_auto(const std::filesystem::path &elf_path,
     if (const auto module = elf.find_module_info(memory, load_base)) imports = elf.scan_imports(memory, *module);
     std::set<std::uint32_t> import_stubs;
     for (const auto &import : imports) import_stubs.insert(import.stub_address);
-    const auto program = psprecomp::analyze_program(elf, memory, load_base);
+    const auto program = psprecomp::analyze_program(elf, memory, load_base, 131072u, extra_entries);
     if (program.executable_ranges.empty()) throw psprecomp::Error("ELF has no executable ranges");
 
     std::filesystem::create_directories(output_dir);
@@ -1743,8 +1744,40 @@ int generate_auto(const std::filesystem::path &elf_path,
 int main(int argc, char **argv) {
     // --generic may appear anywhere; strip it before the positional parsing.
     std::vector<char *> args;
+    std::vector<std::uint32_t> extra_entries;
+    const auto add_entry = [&](const std::string &value) {
+        std::size_t end{};
+        const auto address = std::stoull(value, &end, 0);
+        if (end != value.size() || address > 0xFFFFFFFFull || (address & 3u))
+            throw std::invalid_argument("invalid entry");
+        extra_entries.push_back(static_cast<std::uint32_t>(address));
+    };
     for (int i = 0; i < argc; ++i) {
         if (std::string_view(argv[i]) == "--generic") g_vcs_address_patches = false;
+        else if (std::string_view(argv[i]).starts_with("--entries-file=")) {
+            const auto path = std::string(argv[i]).substr(15);
+            try {
+                std::ifstream file(path);
+                if (!file) throw std::runtime_error("Cannot open entries file");
+                std::string line;
+                while (std::getline(file, line)) {
+                    line = line.substr(0, line.find('#'));
+                    const auto begin = line.find_first_not_of(" \t\r\n");
+                    if (begin == std::string::npos) continue;
+                    add_entry(line.substr(begin, line.find_last_not_of(" \t\r\n") - begin + 1));
+                }
+            } catch (const std::exception &error) {
+                std::cerr << "Invalid entries file " << path << ": " << error.what() << '\n'; return 2;
+            }
+        }
+        else if (std::string_view(argv[i]).starts_with("--entry=")) {
+            const std::string value = std::string(argv[i]).substr(8);
+            try {
+                add_entry(value);
+            } catch (const std::exception &) {
+                std::cerr << "Invalid --entry address: " << value << '\n'; return 2;
+            }
+        }
         else args.push_back(argv[i]);
     }
     argc = static_cast<int>(args.size());
@@ -1762,7 +1795,7 @@ int main(int argc, char **argv) {
                 ? static_cast<std::uint32_t>(std::stoul(argv[5], nullptr, 0))
                 : 0x20000u;
             if (unit_span == 0u || (unit_span & 3u) != 0u) throw psprecomp::Error("unit_span_bytes must be non-zero and 4-byte aligned");
-            return generate_auto(argv[1], argv[3], load_base, unit_span);
+            return generate_auto(argv[1], argv[3], load_base, unit_span, extra_entries);
         }
         if (argc == 4) return generate_manual(argv[1], argv[2], argv[3]);
         std::cerr << "Usage:\n"
