@@ -26,7 +26,7 @@ hacia código nativo, con Android ARM64 como plataforma objetivo.
 | Prueba en S25 Ultra | Ejecuta el inicio y detecta el primer servicio pendiente |
 | Módulos `.ovl` | 69 extraídos; 28 con código, 41 con texto vacío |
 | Traducción experimental de overlays | 576 unidades C++; 604 archivos comprobados para ARM64 |
-| Servicios de arranque | SDK, interrupciones, memoria y relojes; primer hilo iniciado en PC |
+| Servicios de arranque | SDK, interrupciones, memoria, relojes y UMD con callback ejecutado en PC |
 | Menú y partidos | Pendientes |
 | Vulkan, audio y controles | Integración pendiente en PES |
 

@@ -3,6 +3,7 @@
 #include "vcs_native_fast_paths.hpp"
 #include "psp_kernel_library.hpp"
 #include "psp_power_services.hpp"
+#include "psp_umd_services.hpp"
 #include "audio_output.hpp"
 #include "display_window.hpp"
 #include "vcs_camera_input.hpp"
@@ -3532,6 +3533,31 @@ void log_ge_histogram(const GeListRecord &list) {
         if (const char *name = ge_command_name(command)) std::cerr << " name=" << name;
         std::cerr << " last=" << psprecomp::hex32(ge_state.commands[command]) << "\n";
     }
+}
+
+bool dispatch_pending_user_callback(psprecomp::AllegrexContext &ctx, std::uint32_t resume_result) {
+    if (!kernel_cpu_interrupts_enabled()) return false;
+    const auto active = async_return_frames.find(thread_table.current_uid);
+    if (active != async_return_frames.end() && !active->second.empty()) return false;
+    const auto pending = std::find_if(callback_table.callbacks.begin(), callback_table.callbacks.end(),
+        [](const auto &item) {
+            return item.second.owner_uid == thread_table.current_uid &&
+                item.second.notify_count != 0u && item.second.function != 0u;
+        });
+    if (pending == callback_table.callbacks.end()) return false;
+    auto &frames = async_return_frames[thread_table.current_uid];
+    auto &callback = pending->second;
+    auto resume = ctx;
+    resume.pc = ctx.gpr[31];
+    resume.set_gpr(2u, resume_result);
+    frames.push_back(AsyncReturnFrame{AsyncReturnKind::UserCallback, resume, 0u, 0, 0, 0, pending->first});
+    ctx.set_gpr(4u, callback.notify_count);
+    ctx.set_gpr(5u, callback.notify_argument);
+    ctx.set_gpr(6u, callback.common);
+    ctx.set_gpr(31u, 0x00000004u);
+    ctx.pc = callback.function;
+    callback.notify_count = 0u;
+    return true;
 }
 
 bool start_next_guest_callback(psprecomp::AllegrexContext &ctx, bool begin_chain) {
@@ -7132,36 +7158,10 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             virtual_time_us += 25u;
             promote_expired_delays();
 
-            auto pending = std::find_if(callback_table.callbacks.begin(), callback_table.callbacks.end(),
-                [](const auto &item) {
-                    return item.second.owner_uid == thread_table.current_uid &&
-                        item.second.notify_count != 0u && item.second.function != 0u;
-                });
-            if (pending == callback_table.callbacks.end()) {
+            if (!dispatch_pending_user_callback(ctx, 1u)) {
                 set_success(ctx);
                 (void)preempt_if_higher_priority(ctx, "check-callback");
-                return;
             }
-
-            CallbackRecord &callback = pending->second;
-            const std::uint32_t count = callback.notify_count;
-            const std::uint32_t argument = callback.notify_argument;
-            callback.notify_count = 0u;
-
-            psprecomp::AllegrexContext resume = ctx;
-            resume.pc = ctx.gpr[31];
-            resume.set_gpr(2, 1u);
-            auto &frames = async_return_frames[thread_table.current_uid];
-            if (!frames.empty()) {
-                ctx.set_gpr(2, 0u);
-                return;
-            }
-            frames.push_back(AsyncReturnFrame{AsyncReturnKind::UserCallback, resume, 0u, 0, 0, 0, pending->first});
-            ctx.set_gpr(4, count);
-            ctx.set_gpr(5, argument);
-            ctx.set_gpr(6, callback.common);
-            ctx.set_gpr(31, 0x00000004u);
-            ctx.pc = callback.function;
         });
 
     runtime.register_hle("ThreadManForUser", 0xD6DA4BA1u,
@@ -10677,7 +10677,26 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         [io_read](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) { io_read(rt, ctx, true); });
     register_async_and_extra_io(runtime, io_open, io_read, io_lseek, io_close);
     register_lcs_system_extras(runtime);
-    if (kTitlePes2013) install_power_clock_services(runtime);
+    if (kTitlePes2013) {
+        install_power_clock_services(runtime);
+        const bool medium_present = std::filesystem::is_regular_file(runtime.game_root() / "PSP_GAME/PARAM.SFO");
+        install_umd_services(runtime, medium_present, {
+            [](std::int32_t uid) {
+                const auto callback = callback_table.callbacks.find(uid);
+                return callback != callback_table.callbacks.end() && callback->second.function != 0u;
+            },
+            [](std::int32_t uid, std::uint32_t state) {
+                const auto callback = callback_table.callbacks.find(uid);
+                if (callback == callback_table.callbacks.end()) return;
+                if (callback->second.notify_count != std::numeric_limits<std::uint32_t>::max())
+                    ++callback->second.notify_count;
+                callback->second.notify_argument = state;
+            },
+            [](psprecomp::AllegrexContext &ctx, std::uint32_t result) {
+                (void)dispatch_pending_user_callback(ctx, result);
+            }
+        });
+    }
 }
 
 

@@ -3,7 +3,7 @@ add_executable(pes2013_recomp ../vcs/tools/vcs_codegen_main.cpp)
 target_link_libraries(pes2013_recomp PRIVATE psprecomp_core)
 target_compile_definitions(pes2013_recomp PRIVATE PSPRECOMP_GENERIC_CODEGEN=1)
 
-add_library(pes2013_kernel_library STATIC ../vcs/host/psp_kernel_library.cpp ../vcs/host/psp_power_services.cpp)
+add_library(pes2013_kernel_library STATIC ../vcs/host/psp_kernel_library.cpp ../vcs/host/psp_power_services.cpp ../vcs/host/psp_umd_services.cpp)
 target_include_directories(pes2013_kernel_library PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../vcs/host")
 target_link_libraries(pes2013_kernel_library PUBLIC psprecomp_core)
 set_target_properties(pes2013_kernel_library PROPERTIES POSITION_INDEPENDENT_CODE ON)
@@ -11,6 +11,9 @@ if(PSPRECOMP_BUILD_TESTS AND PSPRECOMP_BUILD_PROFILE_TESTS)
     add_executable(pes2013_kernel_tests tests/kernel_library_tests.cpp)
     target_link_libraries(pes2013_kernel_tests PRIVATE pes2013_kernel_library)
     add_test(NAME pes2013_kernel_tests COMMAND pes2013_kernel_tests)
+    add_executable(pes2013_umd_tests tests/umd_services_tests.cpp)
+    target_link_libraries(pes2013_umd_tests PRIVATE pes2013_kernel_library)
+    add_test(NAME pes2013_umd_tests COMMAND pes2013_umd_tests)
 endif()
 
 # A clean checkout can build the tools before local game inputs are supplied.
