@@ -19,7 +19,7 @@ struct State {
     std::int32_t current() const { return hooks.current_thread ? hooks.current_thread() : 1; }
 };
 }
-void install_lwmutex_services(psprecomp::Runtime &runtime, LwMutexHooks hooks) {
+std::function<void(std::int32_t)> install_lwmutex_services(psprecomp::Runtime &runtime, LwMutexHooks hooks) {
     auto state = std::make_shared<State>(); state->hooks = std::move(hooks);
     const auto bind = [&](const char *library, std::uint32_t nid, const char *name, auto handler) {
         runtime.nids().add(library, nid, name); runtime.register_hle(library, nid, std::move(handler));
@@ -74,13 +74,13 @@ void install_lwmutex_services(psprecomp::Runtime &runtime, LwMutexHooks hooks) {
         if (ctx.gpr[6]) {
             if (!rt.memory().raw_pointer(ctx.gpr[6], 4u)) { ctx.set_gpr(2, bad_address); return; }
             if (rt.memory().load32(ctx.gpr[6]) == 0u) { ctx.set_gpr(2, 0x800201A8u); return; }
-            rt.stop("Timed contended LwMutex wait needs scheduler integration"); return;
         }
         if (!state->hooks.block || !state->hooks.ready) { rt.stop("Contended LwMutex has no scheduler"); return; }
         auto resume = ctx; resume.pc = ctx.gpr[31]; resume.set_gpr(2, 0u);
         mutex->waiters.push_back({state->current(), count, resume});
         rt.memory().store32(area + 12, static_cast<std::uint32_t>(mutex->waiters.size()));
-        state->hooks.block(rt, ctx, resume);
+        const auto timeout_address = ctx.gpr[6];
+        state->hooks.block(rt, ctx, resume, timeout_address);
     };
     bind("Kernel_Library", 0xBEA46419u, "sceKernelLockLwMutex", [lock](auto &rt, auto &ctx) { lock(rt, ctx, false, false); });
     bind("Kernel_Library", 0x1FC64E09u, "sceKernelLockLwMutexCB", [lock](auto &rt, auto &ctx) { lock(rt, ctx, false, false); });
@@ -122,5 +122,11 @@ void install_lwmutex_services(psprecomp::Runtime &runtime, LwMutexHooks hooks) {
         rt.memory().store32(area + 12, 0u); rt.memory().store32(area + 16, 0xFFFFFFFFu);
         ctx.set_gpr(2, 0u);
     });
+    return [state, &runtime](std::int32_t uid) {
+        for (auto &[area, mutex] : state->mutexes) {
+            std::erase_if(mutex.waiters, [uid](const auto &waiter) { return waiter.thread == uid; });
+            runtime.memory().store32(area + 12u, static_cast<std::uint32_t>(mutex.waiters.size()));
+        }
+    };
 }
 }

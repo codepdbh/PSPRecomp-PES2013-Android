@@ -12,10 +12,11 @@ int main() {
         std::int32_t current = 1;
         unsigned blocked = 0;
         std::vector<std::pair<std::int32_t, psprecomp::AllegrexContext>> ready;
-        vcs::install_lwmutex_services(rt, {
+        std::uint32_t timeout_seen{};
+        auto remove_waiter = vcs::install_lwmutex_services(rt, {
             [&] { return current; },
             [](std::int32_t uid) { return uid == 3 ? 10u : 30u; },
-            [&](auto &, auto &, const auto &) { ++blocked; },
+            [&](auto &, auto &, const auto &, std::uint32_t timeout) { ++blocked; timeout_seen = timeout; },
             [&](std::int32_t uid, const auto &ctx) { ready.emplace_back(uid, ctx); }
         });
         constexpr std::uint32_t area = 0x08810000u;
@@ -39,9 +40,18 @@ int main() {
         require(call("Kernel_Library", 0x15B6446Bu) == 0x800201CCu, "Nonowner unlocked mutex");
         require(call("Kernel_Library", 0x37431849u) == 0x800201CBu, "Busy trylock reported success");
         require(call("Kernel_Library", 0xDC692EE3u) == 0x800201C4u, "Legacy trylock returned wrong error");
+        constexpr std::uint32_t timeout = area + 128u;
+        rt.memory().store32(timeout, 100u);
+        ctx.set_gpr(4u, area); ctx.set_gpr(5u, 1u); ctx.set_gpr(6u, timeout);
+        rt.invoke_import("Kernel_Library", 0xBEA46419u, ctx);
+        require(timeout_seen == timeout && rt.memory().load32(area + 12u) == 1u,
+                "Timed contention did not pass its timeout to the scheduler");
+        remove_waiter(current);
+        require(rt.memory().load32(area + 12u) == 0u && ready.empty(),
+                "Expired waiter stayed queued or incorrectly acquired mutex");
         call("Kernel_Library", 0xBEA46419u);
         current = 3; call("Kernel_Library", 0xBEA46419u);
-        require(blocked == 2 && rt.memory().load32(area + 12) == 2u, "Contended threads were not queued");
+        require(blocked == 3 && rt.memory().load32(area + 12) == 2u, "Contended threads were not queued");
         current = 1;
         require(call("Kernel_Library", 0x15B6446Bu, 4u) == 0x800201CEu, "Unlock underflow accepted");
         require(call("Kernel_Library", 0x15B6446Bu, 3u) == 0u, "Owner unlock failed");

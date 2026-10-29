@@ -37,24 +37,29 @@ PES todav√≠a no llega al men√∫ y no hay APK jugable.
   576 unidades de c√≥digo y 28 registros; los 604 archivos pasan la comprobaci√≥n
   de sintaxis con Clang del NDK para Android ARM64.
 
-## Bloqueo observado
+## Estado del arranque actual
 
-Despu√©s de ejecutar `bootset` y `memorycard`, el juego accede al scratchpad PSP
-en `0x00010000`. Esa regi√≥n no estaba modelada. Se a√±adi√≥ su memoria separada de
-16 KB con pruebas de alias, l√≠mites, accesos AOT y escritura sin efectos parciales.
-La recompilaci√≥n del corpus con este soporte y su repetici√≥n en el S25 est√°n en curso.
-La espera UMD anterior ya se supera con el disco extra√≠do presente y su callback.
-El modelo UMD todav√≠a no reproduce cambios de disco ni esperas as√≠ncronas con
-temporizador: una condici√≥n que no puede satisfacerse detiene el diagn√≥stico.
+El scratchpad, las operaciones Allegrex MADD/MSUB, DMA, las esperas de mutex
+con temporizador y las consultas de hilos/eventos ya permiten ejecutar tambiÈn
+defaultdataset y 	itle. El logo KONAMI se verificÛ visualmente en el S25.
+Se aÒadiÛ decodificaciÛn MP3 con minimp3 (CC0), probada con un tono original
+sin datos comerciales; las seis suites portables pasan en Windows.
 
-La primera app revel√≥ una pila nativa insuficiente. La revisi√≥n con hilo de 16 MB
-y profundidad de encadenado acotada ya supera ese cierre y llega al scratchpad.
-La pantalla y los controles de la app no prueban todav√≠a funcionamiento en un partido
-ni permiten evaluar FPS jugables. Los APK siguen siendo artefactos locales.
+La introducciÛn quedaba detenida con el b˙fer MPEG lleno: el host despachaba
+˙nicamente el submanejador VBlank 15 usado por VCS. PES registra otro n˙mero.
+Ahora se despachan todos los manejadores VBlank habilitados en orden. La prueba
+PC ya consume el b˙fer, llega al final del archivo y sale de la decodificaciÛn.
+La revisiÛn Android est· instalada: muestra la pantalla de tÌtulo de PES 2013
+y al pulsar avanzar intenta ejecutar select1.ovl. El resolver detuvo ese
+salto porque faltaba enlazarlo. Se est·n compilando los mÛdulos de selecciÛn,
+formaciÛn, partido y resultados. TodavÌa no se ha verificado un partido jugable.
+
+Los APK siguen siendo artefactos locales. Las mÈtricas del arranque no
+representan el rendimiento de un partido.
 
 ## Trabajo que sigue
 
-1. Validar el scratchpad dentro del arranque real y resolver el siguiente bloqueo.
+1. Verificar la salida de la introducciÛn en PC y S25 y resolver el siguiente bloqueo.
 2. Llegar al men√∫ con los overlays bootset, memorycard, enter, title y defaultdataset.
 3. Enlazar los m√≥dulos de selecci√≥n y partido, validando su cambio en ejecuci√≥n.
 4. Revisar las instrucciones que fallen durante ejecuci√≥n; los recuentos est√°ticos

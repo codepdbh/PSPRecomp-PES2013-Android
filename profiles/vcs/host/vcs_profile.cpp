@@ -377,6 +377,7 @@ struct ThreadRecord {
     std::uint32_t wakeup_count{};
     std::uint64_t delay_until_us{};
     std::uint64_t delay_sequence{};
+    std::uint32_t initial_priority{};
 };
 
 struct ThreadContinuation {
@@ -1319,6 +1320,7 @@ struct AsyncReturnFrame {
 
 std::unordered_map<std::int32_t, std::vector<AsyncReturnFrame>> async_return_frames;
 std::shared_ptr<AlarmServices> alarm_services;
+std::function<void(std::int32_t)> remove_lwmutex_waiter;
 
 struct DisplayState {
     std::uint32_t mode{};
@@ -2883,6 +2885,7 @@ void enqueue_continuation(std::int32_t uid, const psprecomp::AllegrexContext &co
                 static_cast<std::uint32_t>(std::min<std::uint64_t>(remaining, UINT32_MAX)));
         }
         timed_kernel_waits.erase(wait);
+        if (remove_lwmutex_waiter) remove_lwmutex_waiter(uid);
     }
     auto thread = thread_table.threads.find(uid);
     if (thread != thread_table.threads.end()) {
@@ -2998,6 +3001,7 @@ void promote_expired_delays() {
             kernel_wait_memory->contains(wait->second.timeout_address, 4u))
             kernel_wait_memory->store32(wait->second.timeout_address, 0u);
         timed_kernel_waits.erase(wait);
+        if (remove_lwmutex_waiter) remove_lwmutex_waiter(uid);
         for (auto &[semaphore_uid, semaphore] : semaphore_table.semaphores) {
             (void)semaphore_uid;
             std::erase_if(semaphore.waiters,
@@ -3370,6 +3374,7 @@ bool allocate_thread_stack(std::uint32_t stack_size, std::uint32_t &bottom, std:
 
 void remove_thread_from_wait_queues(std::int32_t uid) {
     timed_kernel_waits.erase(uid);
+    if (remove_lwmutex_waiter) remove_lwmutex_waiter(uid);
     for (auto &[semaphore_uid, semaphore] : semaphore_table.semaphores) {
         (void)semaphore_uid;
         semaphore.waiters.erase(std::remove_if(semaphore.waiters.begin(), semaphore.waiters.end(),
@@ -5657,7 +5662,7 @@ void consume_event_flag(EventFlagRecord &flag, std::uint32_t requested, std::uin
 // time the game asks for PCM.
 namespace {
 constexpr char kSaveStateMagic[8] = {'V', 'C', 'S', 'S', 'T', 'A', 'T', 'E'};
-constexpr std::uint32_t kSaveStateVersion = 1u;
+constexpr std::uint32_t kSaveStateVersion = 2u;
 
 void state_log(bool warning, const std::string &line) {
 #if defined(__ANDROID__)
@@ -5804,7 +5809,7 @@ void io(StateArchive &ar, ThreadRecord &value) {
     io_all(ar, value.name, value.entry, value.priority, value.stack_size, value.attributes,
            value.stack_top, value.stack_bottom, value.kernel_context, value.state,
            value.exit_status, value.externally_suspended, value.suspended_context,
-           value.wakeup_count, value.delay_until_us, value.delay_sequence);
+           value.wakeup_count, value.delay_until_us, value.delay_sequence, value.initial_priority);
 }
 void io(StateArchive &ar, ThreadTable &value) {
     io_all(ar, value.next_uid, value.current_uid, value.next_stack_top,
@@ -6452,6 +6457,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
     ThreadRecord module_thread{};
     module_thread.name = "module_start";
     module_thread.priority = 32u;
+    module_thread.initial_priority = 32u;
     module_thread.stack_size = 0x10000u;
     // Keep the loader/module stack at the top of user RAM.  The game arena grows
     // upward from the aligned end of the ELF, and subsequent thread stacks grow
@@ -6630,6 +6636,8 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             };
             const std::int32_t uid = thread_table.next_uid++;
             record.stack_top = stack_top;
+            record.initial_priority = record.priority;
+            record.suspended_context.set_gpr(28u, ctx.gpr[28u]);
             record.stack_bottom = stack_bottom;
             record.kernel_context = stack_top - 0x100u;
             rt.memory().zero(stack_bottom, stack_size);
@@ -6746,6 +6754,26 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             complete_current_thread(rt, ctx);
         });
 
+    runtime.nids().add("ThreadManForUser", 0x616403BAu, "sceKernelTerminateThread");
+    runtime.register_hle("ThreadManForUser", 0x616403BAu,
+        [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
+            const auto uid = static_cast<std::int32_t>(ctx.gpr[4]);
+            if (uid == 0 || uid == thread_table.current_uid) { ctx.set_gpr(2, 0x80020197u); return; }
+            const auto found = thread_table.threads.find(uid);
+            if (found == thread_table.threads.end()) { ctx.set_gpr(2, 0x80020198u); return; }
+            auto &thread = found->second;
+            if (thread.state == ThreadState::Created || thread.state == ThreadState::Completed) {
+                ctx.set_gpr(2, 0x800201A2u); return;
+            }
+            std::erase_if(thread_table.continuations, [uid](const auto &item) { return item.uid == uid; });
+            pending_guest_callbacks.erase(uid); async_return_frames.erase(uid); deferred_io_resumes.erase(uid);
+            wake_thread_end_waiters(uid, 0x800201ACu);
+            remove_thread_from_wait_queues(uid);
+            thread.state = ThreadState::Completed; thread.exit_status = 0x800201ACu;
+            thread.priority = thread.initial_priority; thread.externally_suspended = false;
+            thread.wakeup_count = 0u; thread.delay_until_us = 0u;
+            refresh_vcs_post_dispatch_hook(); set_success(ctx);
+        });
     runtime.register_hle("ThreadManForUser", 0x383F7BCCu,
         [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
             const std::int32_t uid = static_cast<std::int32_t>(ctx.gpr[4]);
@@ -6888,6 +6916,47 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             ctx.set_gpr(2, static_cast<std::uint32_t>(thread_table.current_uid));
         });
 
+    runtime.nids().add("ThreadManForUser", 0x17C1684Eu, "sceKernelReferThreadStatus");
+    runtime.register_hle("ThreadManForUser", 0x17C1684Eu,
+        [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+            const auto requested = static_cast<std::int32_t>(ctx.gpr[4]);
+            const auto uid = requested == 0 ? thread_table.current_uid : requested;
+            const auto found = thread_table.threads.find(uid);
+            if (found == thread_table.threads.end()) { ctx.set_gpr(2, 0x80020198u); return; }
+            const auto address = ctx.gpr[5];
+            if (!rt.memory().raw_pointer(address, 4u)) { ctx.set_gpr(2, 0x800200D3u); return; }
+            const auto size = std::min(rt.memory().load32(address), 104u);
+            if (!size) { set_success(ctx); return; }
+            auto *output = rt.memory().raw_pointer(address, size);
+            if (!output) { ctx.set_gpr(2, 0x800200D3u); return; }
+            const auto &thread = found->second;
+            std::uint32_t status = 16u, wait_type = 0u, wait_id = 0u;
+            if (thread.state == ThreadState::Running) status = 1u;
+            else if (thread.state == ThreadState::Ready) status = 2u;
+            else if (thread.state == ThreadState::Delayed) { status = 4u; wait_type = 2u; }
+            else if (thread.state == ThreadState::Sleeping || thread.state == ThreadState::IoDeferred) {
+                status = 4u; wait_type = 1u;
+                for (const auto &[id, semaphore] : semaphore_table.semaphores)
+                    for (const auto &waiter : semaphore.waiters)
+                        if (waiter.uid == uid) { wait_type = 3u; wait_id = id; }
+                for (const auto &[id, flag] : event_flag_table.flags)
+                    for (const auto &waiter : flag.waiters)
+                        if (waiter.uid == uid) { wait_type = 4u; wait_id = id; }
+            }
+            if (thread.externally_suspended) status = (status == 4u ? 4u : 0u) | 8u;
+            std::array<std::uint8_t, 104> info{};
+            const auto word = [&](unsigned offset, std::uint32_t value) {
+                for (unsigned i = 0; i < 4; ++i) info[offset + i] = static_cast<std::uint8_t>(value >> (i * 8));
+            };
+            word(0, 104u); std::memcpy(info.data() + 4u, thread.name.data(), std::min(thread.name.size(), std::size_t{31}));
+            word(36, thread.attributes); word(40, status); word(44, thread.entry);
+            word(48, thread.stack_bottom); word(52, thread.stack_size);
+            word(56, uid == thread_table.current_uid ? ctx.gpr[28] : thread.suspended_context.gpr[28]);
+            word(60, thread.initial_priority); word(64, thread.priority);
+            word(68, wait_type); word(72, wait_id); word(76, thread.wakeup_count); word(80, thread.exit_status);
+            // Run-clock and preemption counters are not modeled yet.
+            std::memcpy(output, info.data(), size); set_success(ctx);
+        });
     runtime.register_hle("ThreadManForUser", 0x71BC9871u,
         [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
             std::int32_t uid = static_cast<std::int32_t>(ctx.gpr[4]);
@@ -7347,6 +7416,33 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             event_flag_table.flags.erase(found);
             set_success(ctx);
             (void)preempt_if_higher_priority(ctx, "event-flag-delete");
+        });
+    runtime.nids().add("ThreadManForUser", 0xA66B0120u, "sceKernelReferEventFlagStatus");
+    runtime.register_hle("ThreadManForUser", 0xA66B0120u,
+        [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+            const auto found = event_flag_table.flags.find(static_cast<std::int32_t>(ctx.gpr[4]));
+            if (found == event_flag_table.flags.end()) { ctx.set_gpr(2, 0x8002019Au); return; }
+            const auto address = ctx.gpr[5];
+            if (!rt.memory().raw_pointer(address, 4u)) { ctx.set_gpr(2, 0x800200D3u); return; }
+            const auto size = std::min(rt.memory().load32(address), 52u);
+            if (!size) { set_success(ctx); return; }
+            auto *output = rt.memory().raw_pointer(address, size);
+            if (!output) { ctx.set_gpr(2, 0x800200D3u); return; }
+            const auto &flag = found->second;
+            if (event_diag_matches(flag) && event_diag_stop_polls != 0u &&
+                ++event_diag_poll_count >= event_diag_stop_polls && !event_diag_stall_reported) {
+                event_diag_stall_reported = true;
+                dump_event_stall_state(flag, found->first, ctx);
+                rt.stop("Event status polling exceeded PSPRECOMP_EVENT_DIAG_STOP_POLLS; scheduler state captured.");
+            }
+            std::array<std::uint8_t, 52> info{};
+            const auto word = [&](unsigned offset, std::uint32_t value) {
+                for (unsigned i = 0; i < 4; ++i) info[offset + i] = static_cast<std::uint8_t>(value >> (i * 8));
+            };
+            word(0, 52u); std::memcpy(info.data() + 4u, flag.name.data(), std::min(flag.name.size(), std::size_t{31}));
+            word(36, flag.attributes); word(40, flag.initial_pattern); word(44, flag.current_pattern);
+            word(48, static_cast<std::uint32_t>(flag.waiters.size()));
+            std::memcpy(output, info.data(), size); set_success(ctx);
         });
     runtime.register_hle("ThreadManForUser", 0x1FB15A32u,
         [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
@@ -8412,27 +8508,36 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             return;
         }
 
-        const auto interrupt = sub_interrupts.find(sub_interrupt_key(30u, 15u));
-        if (!kernel_cpu_interrupts_enabled() || interrupt == sub_interrupts.end() ||
-            !interrupt->second.enabled || interrupt->second.handler == 0u) {
+        // Every registered VBlank sub-handler participates, in sub-number order.
+        // Games choose their own slot; VCS's slot 15 is not a firmware rule.
+        std::vector<std::uint64_t> handlers;
+        if (kernel_cpu_interrupts_enabled()) {
+            for (const auto &[key, record] : sub_interrupts)
+                if ((key >> 32u) == 30u && record.enabled && record.handler != 0u)
+                    handlers.push_back(key);
+        }
+        std::sort(handlers.begin(), handlers.end());
+        if (handlers.empty()) {
             (void)delay_current_thread(rt, ctx, delay);
             return;
         }
-
         const psprecomp::AllegrexContext resume = make_wait_context(ctx);
-        async_return_frames[thread_table.current_uid].push_back(
-            AsyncReturnFrame{AsyncReturnKind::SubInterrupt, resume});
-
-        psprecomp::AllegrexContext handler = ctx;
-        handler.set_gpr(4, 15u);
-        handler.set_gpr(5, interrupt->second.argument);
-        handler.set_gpr(31, 0x00000004u);
-        handler.pc = interrupt->second.handler;
+        auto handler = resume;
+        auto &frames = async_return_frames[thread_table.current_uid];
+        for (auto item = handlers.rbegin(); item != handlers.rend(); ++item) {
+            frames.push_back(AsyncReturnFrame{AsyncReturnKind::SubInterrupt, handler});
+            auto &interrupt = sub_interrupts.at(*item);
+            handler = resume;
+            handler.set_gpr(4, static_cast<std::uint32_t>(*item));
+            handler.set_gpr(5, interrupt.argument);
+            handler.set_gpr(31, 0x00000004u);
+            handler.pc = interrupt.handler;
+            interrupt.occurred = true;
+        }
         current->second.state = ThreadState::Delayed;
         current->second.suspended_context = handler;
         current->second.delay_until_us = virtual_time_us + delay;
         current->second.delay_sequence = thread_table.next_delay_sequence++;
-        interrupt->second.occurred = true;
         if (std::getenv("PSPRECOMP_GE_DIAG") != nullptr) {
             std::cerr << "[intr] schedule vblank uid=" << thread_table.current_uid
                       << " handler=" << psprecomp::hex32(handler.pc)
@@ -8715,6 +8820,14 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             set_success(ctx);
         });
 
+    runtime.nids().add("sceAudio", 0x43196845u, "sceAudioOutput2Release");
+    runtime.register_hle("sceAudio", 0x43196845u,
+        [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
+            auto &state = audio_channels[8];
+            if (!state.reserved) { ctx.set_gpr(2, 0x80260008u); return; }
+            if (audio_remaining_samples(state)) { ctx.set_gpr(2, 0x80268002u); return; }
+            state = {}; vcs::audio_output_reset_channel(8u); set_success(ctx);
+        });
     // sceAudioOutput2OutputBlocking and sceAudioSRCOutputBlocking share this
     // body: both drain the single resampling channel, and the rate recorded at
     // reserve time is what tells them apart.
@@ -10752,10 +10865,15 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         install_impose_language_services(runtime);
         install_utility_av_modules(runtime);
         alarm_services = install_alarm_services(runtime, [] { return virtual_time_us; });
-        install_lwmutex_services(runtime, {
+        remove_lwmutex_waiter = install_lwmutex_services(runtime, {
             [] { return thread_table.current_uid; },
             [](std::int32_t uid) { return thread_priority(uid); },
-            [](auto &rt, auto &ctx, const auto &resume) { (void)suspend_current_thread(rt, ctx, resume, "lwmutex"); },
+            [](auto &rt, auto &ctx, const auto &resume, std::uint32_t timeout_address) {
+                if (timeout_address)
+                    timed_kernel_waits[thread_table.current_uid] =
+                        TimedKernelWait{virtual_time_us + rt.memory().load32(timeout_address), timeout_address};
+                (void)suspend_current_thread(rt, ctx, resume, "lwmutex");
+            },
             [](std::int32_t uid, const auto &resume) { enqueue_continuation(uid, resume); }
         });
         const bool medium_present = std::filesystem::is_regular_file(runtime.game_root() / "PSP_GAME/PARAM.SFO");

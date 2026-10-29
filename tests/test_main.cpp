@@ -7,6 +7,7 @@
 #include "psprecomp/program_analysis.hpp"
 #include "psprecomp/runtime.hpp"
 #include "psprecomp/sha256.hpp"
+#include "psprecomp/integer_ops.hpp"
 
 #include <array>
 #include <bit>
@@ -69,6 +70,28 @@ static void chained_switch_context(psprecomp::Runtime &, psprecomp::AllegrexCont
     // return PC, the old native frame must not consume its registers.
     psprecomp::set_runtime_thread_identity(5, "UmdStreamThread");
     ctx.pc = 0x08804120u;
+}
+
+static void test_allegrex_multiply_accumulate() {
+    require(psprecomp::decode_allegrex(0x0087001Cu).kind == psprecomp::OpcodeKind::Madd, "Allegrex MADD decode failed");
+    require(psprecomp::decode_allegrex(0x0087001Du).kind == psprecomp::OpcodeKind::Maddu, "Allegrex MADDU decode failed");
+    require(psprecomp::decode_allegrex(0x0087002Eu).kind == psprecomp::OpcodeKind::Msub, "Allegrex MSUB decode failed");
+    require(psprecomp::decode_allegrex(0x0087002Fu).kind == psprecomp::OpcodeKind::Msubu, "Allegrex MSUBU decode failed");
+    psprecomp::AllegrexContext ctx{};
+    psprecomp::accumulate_product(ctx, 0xFFFFFFFFu, 2u, false, false);
+    require(ctx.hi == 0xFFFFFFFFu && ctx.lo == 0xFFFFFFFEu, "MADD lost signed product extension");
+    ctx.hi = 0; ctx.lo = 1;
+    psprecomp::accumulate_product(ctx, 0xFFFFFFFFu, 0xFFFFFFFFu, true, false);
+    require(ctx.hi == 0xFFFFFFFEu && ctx.lo == 2u, "MADDU lost high product bits");
+    ctx.hi = ctx.lo = 0;
+    psprecomp::accumulate_product(ctx, 0x80000000u, 0xFFFFFFFFu, false, true);
+    require(ctx.hi == 0xFFFFFFFFu && ctx.lo == 0x80000000u, "MSUB signed boundary failed");
+    ctx.hi = ctx.lo = 0;
+    psprecomp::accumulate_product(ctx, 0xFFFFFFFFu, 0xFFFFFFFFu, true, true);
+    require(ctx.hi == 1u && ctx.lo == 0xFFFFFFFFu, "MSUBU did not wrap unsigned subtraction");
+    ctx.hi = ctx.lo = 0xFFFFFFFFu;
+    psprecomp::accumulate_product(ctx, 1u, 1u, false, false);
+    require(ctx.hi == 0u && ctx.lo == 0u, "MADD failed carry/wrap across HI:LO");
 }
 
 static void test_psp_scratchpad() {
@@ -910,6 +933,7 @@ int main() {
         test_chained_call_context_guard();
         test_overlay_dispatch_resolution();
         test_psp_scratchpad();
+        test_allegrex_multiply_accumulate();
         test_nested_direct_chain_context_guard();
 
         psprecomp::GuestMemory mem;

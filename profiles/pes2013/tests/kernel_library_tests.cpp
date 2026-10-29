@@ -58,6 +58,18 @@ int main() {
         call(rt, 0x293B45B8u);
         require(ctx.gpr[2u] == 17u, "Kernel library thread ID must use the scheduler's service");
 
+        rt.memory().store32(target, 0x11223344u); rt.memory().store32(target + 4u, 0x55667788u);
+        ctx.set_gpr(4u, 0x041FFFFCu); ctx.set_gpr(5u, target); ctx.set_gpr(6u, 8u);
+        rt.invoke_import("sceDmac", 0x617F3FE6u, ctx);
+        require(ctx.gpr[2u] == 0u && rt.memory().load32(0x041FFFFCu) == 0x11223344u &&
+                rt.memory().load32(0x04000000u) == 0x55667788u, "DMA did not wrap a VRAM mirror correctly");
+        ctx.set_gpr(4u, target + 4u); ctx.set_gpr(5u, 0u); ctx.set_gpr(6u, 4u);
+        rt.invoke_import("sceDmac", 0x617F3FE6u, ctx);
+        require(ctx.gpr[2u] == 0x80000103u && rt.memory().load32(target + 4u) == 0x55667788u,
+                "DMA invalid source caused a partial write");
+        ctx.set_gpr(6u, 0u); rt.invoke_import("sceDmac", 0xD97F94D8u, ctx);
+        require(ctx.gpr[2u] == 0x80000104u, "Zero-sized DMA must return INVALID_SIZE");
+
         vcs::install_power_clock_services(rt);
         ctx.set_gpr(4u, 333u); ctx.set_gpr(5u, 266u); ctx.set_gpr(6u, 133u);
         rt.invoke_import("scePower", 0x469989ADu, ctx);

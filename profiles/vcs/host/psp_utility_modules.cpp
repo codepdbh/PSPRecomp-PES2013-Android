@@ -1,4 +1,5 @@
 #include "psp_utility_modules.hpp"
+#include "psp_mp3_services.hpp"
 #include "psprecomp/runtime.hpp"
 #include "psprecomp/common.hpp"
 #include <memory>
@@ -9,17 +10,7 @@ void install_utility_av_modules(psprecomp::Runtime &runtime) {
     // These libraries are supplied by the shared HLE host, not loaded as PRX.
     // Loading a library does not imply every one of its imports is implemented.
     auto loaded = std::make_shared<std::set<std::uint32_t>>();
-    // MP3 resource lifetime is independent of utility-module lifetime. Handles
-    // and decoding remain explicit missing imports until their HLE is installed.
-    auto mp3_resources = std::make_shared<bool>(false);
-    runtime.nids().add("sceMp3", 0x35750070u, "sceMp3InitResource");
-    runtime.nids().add("sceMp3", 0x3C2FA058u, "sceMp3TermResource");
-    runtime.register_hle("sceMp3", 0x35750070u, [mp3_resources](auto &, auto &ctx) {
-        *mp3_resources = true; ctx.set_gpr(2, 0u);
-    });
-    runtime.register_hle("sceMp3", 0x3C2FA058u, [mp3_resources](auto &, auto &ctx) {
-        *mp3_resources = false; ctx.set_gpr(2, 0u);
-    });
+    install_mp3_services(runtime);
     const auto operation = [loaded](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx, bool unload) {
         const auto id = ctx.gpr[4];
         if (id != 0x200u && (id < 0x300u || id > 0x304u)) {

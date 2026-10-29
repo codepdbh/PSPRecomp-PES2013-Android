@@ -10,6 +10,7 @@ add_library(pes2013_kernel_library STATIC
     ../vcs/host/psp_impose_services.cpp
     ../vcs/host/psp_lwmutex_services.cpp
     ../vcs/host/psp_utility_modules.cpp
+    ../vcs/host/psp_mp3_services.cpp
     ../vcs/host/psp_alarm_services.cpp)
 target_include_directories(pes2013_kernel_library PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../vcs/host")
 target_link_libraries(pes2013_kernel_library PUBLIC psprecomp_core)
@@ -28,6 +29,10 @@ if(PSPRECOMP_BUILD_TESTS AND PSPRECOMP_BUILD_PROFILE_TESTS)
     target_include_directories(pes2013_overlay_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/host")
     target_link_libraries(pes2013_overlay_tests PRIVATE psprecomp_core)
     add_test(NAME pes2013_overlay_tests COMMAND pes2013_overlay_tests)
+    add_executable(pes2013_mp3_tests tests/mp3_tests.cpp)
+    target_link_libraries(pes2013_mp3_tests PRIVATE pes2013_kernel_library)
+    target_compile_definitions(pes2013_mp3_tests PRIVATE PES2013_MP3_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/tone.mp3")
+    add_test(NAME pes2013_mp3_tests COMMAND pes2013_mp3_tests)
 endif()
 
 # A clean checkout can build the tools before local game inputs are supplied.

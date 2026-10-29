@@ -203,6 +203,12 @@ std::string emit_regular(const psprecomp::DecodedInstruction &d, std::uint32_t p
         out << "    { const std::uint64_t product = static_cast<std::uint64_t>(" << reg(d.rs) << ") * static_cast<std::uint64_t>(" << reg(d.rt) << "); "
             << "ctx.lo = static_cast<std::uint32_t>(product); ctx.hi = static_cast<std::uint32_t>(product >> 32u); }\n";
         break;
+    case psprecomp::OpcodeKind::Madd: case psprecomp::OpcodeKind::Maddu:
+    case psprecomp::OpcodeKind::Msub: case psprecomp::OpcodeKind::Msubu:
+        out << "    accumulate_product(ctx, " << reg(d.rs) << ", " << reg(d.rt) << ", "
+            << ((d.kind == psprecomp::OpcodeKind::Maddu || d.kind == psprecomp::OpcodeKind::Msubu) ? "true" : "false") << ", "
+            << ((d.kind == psprecomp::OpcodeKind::Msub || d.kind == psprecomp::OpcodeKind::Msubu) ? "true" : "false") << ");\n";
+        break;
     case psprecomp::OpcodeKind::Div:
         // $zero is emitted as a literal 0u.  If it is also the divisor, do not
         // emit a syntactically present / or % expression at all: MSVC diagnoses
@@ -1179,7 +1185,7 @@ int generate_manual(const std::filesystem::path &elf_path,
 
     std::ofstream out(output_path);
     if (!out) throw psprecomp::Error("Cannot create generated source");
-    out << "#include \"psprecomp/runtime.hpp\"\n#include <bit>\n#include <cmath>\n#include <cstdint>\n#include <limits>\n\nnamespace psprecomp {\n";
+    out << "#include \"psprecomp/runtime.hpp\"\n#include \"psprecomp/integer_ops.hpp\"\n#include <bit>\n#include <cmath>\n#include <cstdint>\n#include <limits>\n\nnamespace psprecomp {\n";
 
     std::vector<GeneratedFunctionInput> generated;
     for (const auto &function : functions) {
@@ -1535,7 +1541,7 @@ int generate_auto(const std::filesystem::path &elf_path,
         };
 
         std::ostringstream out;
-        out << "#include \"psprecomp/runtime.hpp\"\n#include \"generated_units.hpp\"\n#include <bit>\n#include <cmath>\n#include <cstdint>\n#include <limits>\n\nnamespace psprecomp {\n";
+        out << "#include \"psprecomp/runtime.hpp\"\n#include \"psprecomp/integer_ops.hpp\"\n#include \"generated_units.hpp\"\n#include <bit>\n#include <cmath>\n#include <cstdint>\n#include <limits>\n\nnamespace psprecomp {\n";
         // The register-cache lowering passes (per-basic-block GPR/FPR caches and
         // the cross-unit hot-register cache) are deliberately absent.  They kept
         // large numbers of guest registers live in C++ locals and in a second

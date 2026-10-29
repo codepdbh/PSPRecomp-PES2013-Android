@@ -27,7 +27,7 @@ hacia código nativo, con Android ARM64 como plataforma objetivo.
 | Prueba en S25 Ultra | Ejecuta `bootset` y `memorycard`; app de desarrollo instalada |
 | Módulos `.ovl` | 69 extraídos; 28 con código, 41 con texto vacío |
 | Traducción experimental de overlays | 576 unidades C++; 604 archivos comprobados para ARM64 |
-| Servicios de arranque | UMD, mutex ligeros, alarmas, SAS y lectura de archivos CPK |
+| Servicios de arranque | UMD, mutex con temporizador, alarmas, DMA, MP3, SAS y archivos CPK |
 | Menú y partidos | Pendientes |
 | Vulkan, audio y controles | Base de app conectada; validación en juego pendiente |
 

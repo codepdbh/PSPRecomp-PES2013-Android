@@ -38,9 +38,9 @@ class RuntimeWatchdog {
     bool expired_{};
     std::thread worker_;
 public:
-    explicit RuntimeWatchdog(psprecomp::Runtime &runtime) : runtime_(runtime), worker_([this] {
+    explicit RuntimeWatchdog(psprecomp::Runtime &runtime, unsigned seconds) : runtime_(runtime), worker_([this, seconds] {
         std::unique_lock lock(mutex_);
-        if (!condition_.wait_for(lock, std::chrono::seconds(20), [this] { return finished_; })) {
+        if (!condition_.wait_for(lock, std::chrono::seconds(seconds), [this] { return finished_; })) {
             expired_ = true;
             runtime_.request_stop();
         }
@@ -132,17 +132,32 @@ int main(int argc, char **argv) {
                   << "Entry: " << psprecomp::hex32(image.runtime_entry()) << '\n'
                   << "Registered entries: " << runtime->function_count() << std::endl;
 #if defined(PSPRECOMP_PES2013_SHARED_HOST)
-        RuntimeWatchdog watchdog(*runtime);
+        unsigned timeout_seconds = 20u;
+        if (const auto *value = std::getenv("PSPRECOMP_PROBE_TIMEOUT_SECONDS")) {
+            std::size_t consumed{};
+            const auto requested = std::stoul(value, &consumed, 0);
+            if (consumed != std::string(value).size() || requested == 0u || requested > 120u)
+                throw psprecomp::Error("Invalid PSPRECOMP_PROBE_TIMEOUT_SECONDS");
+            timeout_seconds = static_cast<unsigned>(requested);
+        }
+        RuntimeWatchdog watchdog(*runtime, timeout_seconds);
 #endif
         bool execution_failed = false;
         try {
-            runtime->run(image.runtime_entry(), 100000u);
+            std::uint64_t dispatch_limit = 1'000'000u;
+            if (const auto *value = std::getenv("PSPRECOMP_PROBE_DISPATCH_LIMIT")) {
+                std::size_t consumed{};
+                dispatch_limit = std::stoull(value, &consumed, 0);
+                if (consumed != std::string(value).size() || !dispatch_limit || dispatch_limit > 100'000'000u)
+                    throw psprecomp::Error("Invalid PSPRECOMP_PROBE_DISPATCH_LIMIT");
+            }
+            runtime->run(image.runtime_entry(), dispatch_limit);
         } catch (const std::exception &error) {
             execution_failed = true;
             runtime->stop(std::string("Execution error: ") + error.what());
         }
 #if defined(PSPRECOMP_PES2013_SHARED_HOST)
-        if (watchdog.expired()) runtime->stop("Host bootstrap watchdog expired after 20 seconds");
+        if (watchdog.expired()) runtime->stop("Host bootstrap watchdog expired after " + std::to_string(timeout_seconds) + " seconds");
 #endif
         std::cout << "Stop: " << runtime->stop_reason() << '\n'
                   << "Guest PC: " << psprecomp::hex32(cpu.pc) << '\n';

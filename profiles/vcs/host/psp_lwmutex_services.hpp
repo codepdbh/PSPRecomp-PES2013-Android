@@ -7,8 +7,9 @@ struct LwMutexHooks {
     std::function<std::int32_t()> current_thread;
     std::function<std::uint32_t(std::int32_t)> priority;
     std::function<void(psprecomp::Runtime &, psprecomp::AllegrexContext &,
-                       const psprecomp::AllegrexContext &)> block;
+                       const psprecomp::AllegrexContext &, std::uint32_t timeout_address)> block;
     std::function<void(std::int32_t, const psprecomp::AllegrexContext &)> ready;
 };
-void install_lwmutex_services(psprecomp::Runtime &runtime, LwMutexHooks hooks);
+// Returned hook removes a thread from queues on timeout or termination.
+std::function<void(std::int32_t)> install_lwmutex_services(psprecomp::Runtime &runtime, LwMutexHooks hooks);
 }

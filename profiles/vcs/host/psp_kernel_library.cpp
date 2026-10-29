@@ -3,6 +3,7 @@
 
 #include <atomic>
 #include <cstring>
+#include <vector>
 
 namespace vcs {
 namespace {
@@ -68,5 +69,31 @@ void install_kernel_library(psprecomp::Runtime &runtime) {
         [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
             rt.invoke_import("ThreadManForUser", 0x293B45B8u, ctx);
         });
+    const auto dma_copy = [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+        const auto destination = ctx.gpr[4], source = ctx.gpr[5], size = ctx.gpr[6];
+        if (!size) { ctx.set_gpr(2, 0x80000104u); return; }
+        if (static_cast<std::uint64_t>(destination) + size >= 0x80000000ull ||
+            static_cast<std::uint64_t>(source) + size >= 0x80000000ull || size >= 0x80000000u) {
+            ctx.set_gpr(2, 0x80000023u); return;
+        }
+        if (!rt.memory().contains(destination, size) || !rt.memory().contains(source, size)) {
+            ctx.set_gpr(2, 0x80000103u); return;
+        }
+        auto *output = rt.memory().raw_pointer(destination, size);
+        const auto *input = rt.memory().raw_pointer(source, size);
+        if (output && input) std::memmove(output, input, size);
+        else {
+            // VRAM mirrors are valid guest ranges but may wrap in host storage.
+            std::vector<std::uint8_t> temporary(size);
+            rt.memory().copy_out(source, temporary);
+            rt.memory().copy_in(destination, temporary);
+        }
+        // Transfers complete synchronously; no DMA timing/busy model yet.
+        ctx.set_gpr(2, 0u);
+    };
+    runtime.nids().add("sceDmac", 0x617F3FE6u, "sceDmacMemcpy");
+    runtime.nids().add("sceDmac", 0xD97F94D8u, "sceDmacTryMemcpy");
+    runtime.register_hle("sceDmac", 0x617F3FE6u, dma_copy);
+    runtime.register_hle("sceDmac", 0xD97F94D8u, dma_copy);
 }
 }
