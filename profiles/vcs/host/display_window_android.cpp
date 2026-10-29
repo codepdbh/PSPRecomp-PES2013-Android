@@ -109,9 +109,6 @@ DisplayWindowSurface display_window_surface() {
 
 void display_window_present(const psprecomp::GuestMemory &memory,
                             const FramebufferDescription &description) {
-    if (g_buffer_width > description.width && g_buffer_height > description.height) {
-        return;
-    }
     try {
         const std::vector<std::byte> rgba = decode_framebuffer_rgba(memory, description);
         std::lock_guard lock(g_mutex);

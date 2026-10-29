@@ -13,7 +13,7 @@ void install_utility_av_modules(psprecomp::Runtime &runtime) {
     install_mp3_services(runtime);
     const auto operation = [loaded](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx, bool unload) {
         const auto id = ctx.gpr[4];
-        if (id != 0x200u && (id < 0x300u || id > 0x304u)) {
+        if (id != 0x200u && (id < 0x100u || id > 0x105u) && (id < 0x300u || id > 0x304u)) {
             rt.stop("Utility module not implemented by PES host: " + psprecomp::hex32(id)); return;
         }
         if (unload) {

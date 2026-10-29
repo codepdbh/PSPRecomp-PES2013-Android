@@ -6261,6 +6261,12 @@ struct MessageDialogState {
 };
 MessageDialogState message_dialog;
 
+struct OskDialogState {
+    std::uint32_t status{};      // 0 none, 1 init, 2 visible, 3 quitting, 4 finished
+    std::uint32_t parameters{};
+};
+OskDialogState osk_dialog;
+
 // System services LCS imports and VCS never did. Its wifi multiplayer is
 // answered with "no network", which the game handles by leaving the mode
 // unavailable; the rest are small kernel/utility queries.
@@ -6409,6 +6415,81 @@ void register_lcs_system_extras(psprecomp::Runtime &runtime) {
             if (status == 4u) message_dialog = MessageDialogState{};
             ctx.set_gpr(2, status);
         });
+
+    // sceUtilityOskInitStart / ShutdownStart / Update / GetStatus
+    runtime.nids().add("sceUtility", 0xF6269B82u, "sceUtilityOskInitStart");
+    runtime.nids().add("sceUtility", 0x3DFAEBA9u, "sceUtilityOskShutdownStart");
+    runtime.nids().add("sceUtility", 0x4B85C861u, "sceUtilityOskUpdate");
+    runtime.nids().add("sceUtility", 0xF3F76017u, "sceUtilityOskGetStatus");
+
+    runtime.register_hle("sceUtility", 0xF6269B82u,
+        [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+            const std::uint32_t params = ctx.gpr[4];
+            if (osk_dialog.status != 0u) { ctx.set_gpr(2, 0x80110001u); return; }
+            if (params == 0u || !rt.memory().contains(params, 0x38u)) {
+                ctx.set_gpr(2, 0x80110004u);
+                return;
+            }
+            osk_dialog = OskDialogState{2u, params};
+            rt.memory().store32(params + 0x1Cu, 0u); // base.result = 0
+            ctx.set_gpr(2, 0u);
+        });
+    runtime.register_hle("sceUtility", 0x4B85C861u,
+        [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+            if (osk_dialog.status == 2u) {
+                const std::uint32_t params = osk_dialog.parameters;
+                if (rt.memory().contains(params, 0x38u)) {
+                    const std::uint32_t data_count = rt.memory().load32(params + 0x30u);
+                    const std::uint32_t data_base = rt.memory().load32(params + 0x34u);
+                    for (std::uint32_t i = 0u; i < std::min(data_count, 16u); ++i) {
+                        const std::uint32_t item = data_base + i * 52u; // sizeof(SceUtilityOskData)
+                        if (!rt.memory().contains(item, 52u)) continue;
+                        const std::uint32_t intext = rt.memory().load32(item + 0x20u);
+                        const std::uint32_t outtext = rt.memory().load32(item + 0x28u);
+                        const std::uint32_t outlen = rt.memory().load32(item + 0x24u);
+                        if (outtext != 0u && outlen > 0u && rt.memory().contains(outtext, outlen * 2u)) {
+                            bool copied = false;
+                            if (intext != 0u && rt.memory().contains(intext, 2u)) {
+                                std::uint32_t idx = 0u;
+                                while (idx + 1u < outlen) {
+                                    const std::uint16_t ch = rt.memory().load16(intext + idx * 2u);
+                                    rt.memory().store16(outtext + idx * 2u, ch);
+                                    if (ch == 0u) { if (idx > 0u) copied = true; break; }
+                                    ++idx;
+                                }
+                                if (copied) {
+                                    rt.memory().store16(outtext + idx * 2u, 0u);
+                                }
+                            }
+                            if (!copied) {
+                                rt.memory().store16(outtext + 0u, static_cast<std::uint16_t>('P'));
+                                rt.memory().store16(outtext + 2u, static_cast<std::uint16_t>('E'));
+                                rt.memory().store16(outtext + 4u, static_cast<std::uint16_t>('S'));
+                                rt.memory().store16(outtext + 6u, 0u);
+                            }
+                            // rc: PSP_UTILITY_OSK_RESULT_CHANGED = 2
+                            rt.memory().store32(item + 0x2Cu, 2u);
+                        }
+                    }
+                    rt.memory().store32(params + 0x1Cu, 0u); // base.result = 0
+                }
+                osk_dialog.status = 3u;
+            }
+            ctx.set_gpr(2, 0u);
+        });
+    runtime.register_hle("sceUtility", 0x3DFAEBA9u,
+        [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
+            if (osk_dialog.status == 3u || osk_dialog.status == 2u || osk_dialog.status == 1u) {
+                osk_dialog.status = 4u;
+            }
+            ctx.set_gpr(2, 0u);
+        });
+    runtime.register_hle("sceUtility", 0xF3F76017u,
+        [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
+            const std::uint32_t status = osk_dialog.status;
+            if (status == 4u) osk_dialog = OskDialogState{};
+            ctx.set_gpr(2, status);
+        });
 }
 } // namespace
 
@@ -6431,6 +6512,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
     file_table = FileTable{};
     async_io_results.clear();
     message_dialog = MessageDialogState{};
+    osk_dialog = OskDialogState{};
     for (auto &[address, state] : mpeg_contexts) close_video_decoder(state);
     mpeg_contexts.clear();
     for (auto &state : atrac_contexts) close_atrac_decoder(state);
@@ -8447,9 +8529,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         if (gpu_frame_ready) {
             holding_gpu_frame = true;
             vblanks_since_gpu_frame = 0u;
-        } else if (ge_gpu_backend_report().software_fallback_frame) {
-            holding_gpu_frame = false;
-        } else if (holding_gpu_frame && ++vblanks_since_gpu_frame > 4u) {
+        } else if (holding_gpu_frame && ++vblanks_since_gpu_frame > 30u) {
             holding_gpu_frame = false;
         }
         bool presented_gpu_frame = false;
@@ -8470,29 +8550,16 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             }
         }
         if (!presented_gpu_frame) {
-            if (ge_gpu_backend_active() && gpu_has_presented) {
-                // If the GPU backend is active and has presented, hold the GPU frame
-                // instead of falling back to the 480x272 software RAM buffer, which causes
-                // severe resolution/geometry oscillation and 60Hz flickering.
-                const GeGpuBackendReport gpu = ge_gpu_backend_report();
-                const std::span<const std::byte> rgba = ge_gpu_backend_game_frame_rgba();
-                if (!rgba.empty()) {
-                    display_window_present_rgba(rgba, gpu.offscreen_width, gpu.offscreen_height);
-                    presented_gpu_frame = true;
-                }
-            }
-            if (!presented_gpu_frame) {
-                holding_gpu_frame = false;
-                // The window is showing the guest framebuffer that the software GE
-                // filled.  Counting these tells whether
-                // PSPRECOMP_GE_GPU_SKIP_DISPLAYED_RASTER could ever put a stale
-                // surface on screen: the flag only skips while the swapchain is
-                // presenting, so what matters is how often the run leaves that state
-                // after having entered it.
-                ++software_presents;
-                if (gpu_has_presented) ++software_presents_after_gpu;
-                display_window_present(rt.memory(), displayed);
-            }
+            holding_gpu_frame = false;
+            // The window is showing the guest framebuffer that the software GE
+            // filled.  Counting these tells whether
+            // PSPRECOMP_GE_GPU_SKIP_DISPLAYED_RASTER could ever put a stale
+            // surface on screen: the flag only skips while the swapchain is
+            // presenting, so what matters is how often the run leaves that state
+            // after having entered it.
+            ++software_presents;
+            if (gpu_has_presented) ++software_presents_after_gpu;
+            display_window_present(rt.memory(), displayed);
         } else if (ge_gpu_backend_presents_directly()) {
             gpu_has_presented = true;
             ++swapchain_presents;
