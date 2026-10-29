@@ -12,4 +12,10 @@ inline constexpr bool kTitleLcs = true;
 #else
 inline constexpr bool kTitleLcs = false;
 #endif
+#if defined(PSPRECOMP_TITLE_PES2013)
+inline constexpr bool kTitlePes2013 = true;
+#else
+inline constexpr bool kTitlePes2013 = false;
+#endif
+inline constexpr bool kTitleVcs = !kTitleLcs && !kTitlePes2013;
 } // namespace vcs

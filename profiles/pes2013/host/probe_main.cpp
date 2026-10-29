@@ -8,6 +8,52 @@
 #include <iostream>
 #include <memory>
 
+#if defined(PSPRECOMP_PES2013_SHARED_HOST)
+#include "vcs_config.hpp"
+#include "vcs_profile.hpp"
+#include "audio_output.hpp"
+#include "ge_gpu_backend.hpp"
+#include <algorithm>
+#include <chrono>
+#include <condition_variable>
+#include <fstream>
+#include <mutex>
+#include <thread>
+
+void android_game_runtime_set_status(const char *status) {
+    std::cout << "[host-status] " << status << '\n';
+}
+
+namespace {
+// NDK 28's libc++ does not provide std::jthread on this target.
+class RuntimeWatchdog {
+    psprecomp::Runtime &runtime_;
+    std::mutex mutex_;
+    std::condition_variable condition_;
+    bool finished_{};
+    bool expired_{};
+    std::thread worker_;
+public:
+    explicit RuntimeWatchdog(psprecomp::Runtime &runtime) : runtime_(runtime), worker_([this] {
+        std::unique_lock lock(mutex_);
+        if (!condition_.wait_for(lock, std::chrono::seconds(20), [this] { return finished_; })) {
+            expired_ = true;
+            runtime_.request_stop();
+        }
+    }) {}
+    ~RuntimeWatchdog() {
+        { std::lock_guard lock(mutex_); finished_ = true; }
+        condition_.notify_one();
+        worker_.join();
+    }
+    bool expired() {
+        std::lock_guard lock(mutex_);
+        return expired_;
+    }
+};
+}
+#endif
+
 // This is a diagnostic bootstrap, not the game host. In particular, missing
 // PSP services must stop execution instead of pretending to succeed.
 int main(int argc, char **argv) {
@@ -32,9 +78,37 @@ int main(int argc, char **argv) {
             runtime->memory(), psprecomp::kDefaultPspUserLoadBase);
         if (!module) throw psprecomp::Error("PES module information was not found");
         psprecomp::register_generated_functions(*runtime);
+#if defined(PSPRECOMP_PES2013_SHARED_HOST)
+        const auto app_data = root / "probe-state";
+        std::filesystem::create_directories(app_data);
+        // Headless service test: no Android window or GPU is initialized.
+        const auto ini = app_data / "VCSNative.ini";
+        // This directory belongs solely to the diagnostic process, so each
+        // run sets a reproducible, silent configuration without a window.
+        {
+            std::ofstream settings(ini);
+            if (!settings) throw psprecomp::Error("Cannot create headless probe configuration");
+            settings << "[Rendering]\nBackend=Software\n[Timing]\nFrameRate=60\n[Audio]\nEnabled=false\n";
+        }
+        vcs::initialize_vcs_configuration(app_data);
+        std::uint64_t image_end = 0u;
+        for (std::size_t index = 0u; index < image.segments().size(); ++index) {
+            const auto &segment = image.segments()[index];
+            if (segment.type != 1u) continue;
+            image_end = std::max(image_end,
+                static_cast<std::uint64_t>(image.segment_runtime_address(
+                    index, psprecomp::kDefaultPspUserLoadBase)) + segment.memory_size);
+        }
+        if (image_end == 0u || image_end >= 0x09FF0000ull)
+            throw psprecomp::Error("PES image leaves no room for the loader stack");
+        vcs::install_profile(*runtime, static_cast<std::uint32_t>((image_end + 255u) & ~255ull));
+        vcs::install_starvation_preemption();
+#endif
         auto &cpu = runtime->cpu();
         cpu.set_gpr(28u, module->gp);
+#if !defined(PSPRECOMP_PES2013_SHARED_HOST)
         cpu.set_gpr(29u, 0x09FFF000u);
+#endif
         cpu.set_gpr(31u, 0u);
         cpu.set_gpr(4u, 0u);
         cpu.set_gpr(5u, 0u);
@@ -43,9 +117,22 @@ int main(int argc, char **argv) {
                   << "Module: " << module->name << '\n'
                   << "Entry: " << psprecomp::hex32(image.runtime_entry()) << '\n'
                   << "Registered entries: " << runtime->function_count() << std::endl;
+#if defined(PSPRECOMP_PES2013_SHARED_HOST)
+        RuntimeWatchdog watchdog(*runtime);
+#endif
         runtime->run(image.runtime_entry(), 100000u);
+#if defined(PSPRECOMP_PES2013_SHARED_HOST)
+        if (watchdog.expired()) runtime->stop("Host bootstrap watchdog expired after 20 seconds");
+#endif
         std::cout << "Stop: " << runtime->stop_reason() << '\n'
                   << "Guest PC: " << psprecomp::hex32(cpu.pc) << '\n';
+#if defined(PSPRECOMP_PES2013_SHARED_HOST)
+        runtime->report_hle_histogram();
+        vcs::report_disc_read_stats();
+        vcs::report_present_stats();
+        vcs::audio_output_shutdown();
+        vcs::shutdown_ge_gpu_backend();
+#endif
         // An unimplemented service is the expected diagnostic result, not a
         // successful game boot. Preserve that distinction in the exit status.
         return 3;

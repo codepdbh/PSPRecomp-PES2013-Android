@@ -21,15 +21,19 @@ hacia código nativo, con Android ARM64 como plataforma objetivo.
 | Componente | Estado |
 | --- | --- |
 | Copia analizada | PSP USA, `ULUS10597` |
-| EBOOT traducido | 183 unidades C++ iniciales |
+| EBOOT traducido | 161 unidades C++; análisis de tablas de saltos corregido |
 | Compilación nativa | Windows x64 y Android ARM64 |
 | Prueba en S25 Ultra | Ejecuta el inicio y detecta el primer servicio pendiente |
-| Módulos `.ovl` | 69 extraídos de `OVER.cpk`, con validación de tamaños |
+| Módulos `.ovl` | 69 extraídos; 28 con código, 41 con texto vacío |
+| Traducción experimental de overlays | 576 unidades C++; 604 archivos comprobados para ARM64 |
+| Servicios de arranque | SDK, interrupciones, memoria y relojes; primer hilo iniciado en PC |
 | Menú y partidos | Pendientes |
 | Vulkan, audio y controles | Integración pendiente en PES |
 
 Los detalles técnicos y los límites de cada prueba están en el
 [perfil de PES](profiles/pes2013/README.md).
+El [avance comprobado](docs/PROGRESS.md) identifica el bloqueo actual y los
+siguientes pasos.
 
 ## Por qué requiere un perfil propio
 
@@ -87,10 +91,15 @@ Las instrucciones de compilación ARM64 están en el [perfil](profiles/pes2013/R
 - [x] Traducir y compilar el EBOOT para PC y Android ARM64.
 - [x] Ejecutar la prueba inicial en el S25 Ultra.
 - [x] Extraer los 69 overlays de `OVER.cpk`.
+- [x] Traducir los 28 overlays con código a espacios de nombres separados.
+- [x] Comprobar la sintaxis ARM64 de esos archivos C++.
 - [ ] Integrar los servicios de arranque de PSP.
 - [ ] Verificar y traducir el cargador de overlays.
 - [ ] Llegar al menú y a un partido.
 - [ ] Integrar y validar Vulkan, audio y controles en una app independiente.
+
+La traducción de overlays aún no está enlazada con el cargador del juego. Los
+avances de compilación no equivalen a que el menú o un partido funcionen.
 
 ## Datos y licencias
 

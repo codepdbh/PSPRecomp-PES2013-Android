@@ -1,6 +1,8 @@
 #include "vcs_profile.hpp"
 #include "guest_title.hpp"
 #include "vcs_native_fast_paths.hpp"
+#include "psp_kernel_library.hpp"
+#include "psp_power_services.hpp"
 #include "audio_output.hpp"
 #include "display_window.hpp"
 #include "vcs_camera_input.hpp"
@@ -2915,6 +2917,7 @@ auto best_ready_thread() {
 }
 
 bool preempt_if_higher_priority(psprecomp::AllegrexContext &ctx, const char *reason) {
+    if (!kernel_cpu_interrupts_enabled()) return false;
     const auto current = thread_table.threads.find(thread_table.current_uid);
     if (current == thread_table.threads.end() || current->second.state != ThreadState::Running) return false;
     const auto best = best_ready_thread();
@@ -3122,7 +3125,7 @@ bool activate_next_thread(psprecomp::AllegrexContext &ctx, const char *reason) {
                   << "\n";
     }
 
-    (void)maybe_start_pending_guest_callback(ctx);
+    if (kernel_cpu_interrupts_enabled()) (void)maybe_start_pending_guest_callback(ctx);
     return true;
 }
 
@@ -3597,7 +3600,7 @@ void vcs_post_import_hook(psprecomp::Runtime &runtime, psprecomp::AllegrexContex
         ge_async_drain_completions();
         if (!ge_async_check_fatal(runtime)) return;
     }
-    (void)maybe_start_pending_guest_callback(ctx);
+    if (kernel_cpu_interrupts_enabled()) (void)maybe_start_pending_guest_callback(ctx);
 }
 
 struct CollisionChainTraceFrame {
@@ -5608,8 +5611,7 @@ void state_log(bool warning, const std::string &line) {
     __android_log_print(warning ? ANDROID_LOG_WARN : ANDROID_LOG_INFO, "VCSState", "%s", line.c_str());
 #else
     (void)warning;
-    std::cerr << "[savestate] " << line << "
-";
+    std::cerr << "[savestate] " << line << '\n';
 #endif
 }
 
@@ -6353,9 +6355,10 @@ void register_lcs_system_extras(psprecomp::Runtime &runtime) {
 } // namespace
 
 void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start) {
+    install_kernel_library(runtime);
     // Native leaves and the frame-limiter patch sit at VCS addresses.
-    if (!kTitleLcs) install_native_fast_paths(runtime);
-    if (configured_game_frame_rate() > 30u) {
+    if (kTitleVcs) install_native_fast_paths(runtime);
+    if (!kTitlePes2013 && configured_game_frame_rate() > 30u) {
         if (kTitleLcs)
             runtime.register_function(kLcsFrameLimiterBranch,
                                       &lcs_unlocked_frame_limiter_patch,
@@ -6472,14 +6475,15 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
     runtime.register_function(0x00000000u, &vcs_module_thread_return, "psp_thread_return");
     runtime.register_function(0x00000004u, &vcs_interrupt_return, "psp_interrupt_return");
     // Host replacements of VCS guest functions, by their VCS addresses.
-    if (!kTitleLcs) {
+    if (kTitleVcs) {
         runtime.register_function(0x08B562D8u, &vcs_sprintf, "vcs_sprintf");
         runtime.register_function(0x088B4FA8u, &vcs_path_hash, "vcs_path_hash");
         runtime.register_function(0x08B1B36Cu, &vcs_load_codec_modules, "vcs_load_codec_modules");
         if (std::getenv("PSPRECOMP_NO_FAST_DEFLATE") == nullptr)
             runtime.register_function(0x08B648B0u, &vcs_raw_deflate_fast, "vcs_raw_deflate_fast");
     }
-    runtime.register_hle("SysMemUserForUser", 0x7591C7DBu,
+    for (const std::uint32_t nid : {0x7591C7DBu, 0x358CA1BBu})
+    runtime.register_hle("SysMemUserForUser", nid,
         [](psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
             compiled_sdk_version = ctx.gpr[4];
             set_success(ctx);
@@ -8360,7 +8364,8 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         }
 
         const auto interrupt = sub_interrupts.find(sub_interrupt_key(30u, 15u));
-        if (interrupt == sub_interrupts.end() || !interrupt->second.enabled || interrupt->second.handler == 0u) {
+        if (!kernel_cpu_interrupts_enabled() || interrupt == sub_interrupts.end() ||
+            !interrupt->second.enabled || interrupt->second.handler == 0u) {
             (void)delay_current_thread(rt, ctx, delay);
             return;
         }
@@ -10585,7 +10590,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                 std::uint32_t stream_request = 0u;
                 std::uint32_t release_pc_hint = 0u;
                 // VCS's UMD streaming thread and its request layout.
-                if (!kTitleLcs && thread_table.current_uid == 5 &&
+                if (kTitleVcs && thread_table.current_uid == 5 &&
                     rt.memory().contains(ctx.gpr[22] + 6916u, 4u)) {
                     stream_request = rt.memory().load32(ctx.gpr[22] + 6916u);
                     release_pc_hint = uncommitted_world_stream_release_pc(rt, stream_request);
@@ -10672,6 +10677,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         [io_read](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) { io_read(rt, ctx, true); });
     register_async_and_extra_io(runtime, io_open, io_read, io_lseek, io_close);
     register_lcs_system_extras(runtime);
+    if (kTitlePes2013) install_power_clock_services(runtime);
 }
 
 
@@ -10687,6 +10693,7 @@ std::uint64_t starvation_tick_microseconds = 1u;
 void vcs_starvation_tick(psprecomp::Runtime &, psprecomp::AllegrexContext &ctx) {
     virtual_time_us += starvation_tick_microseconds;
     promote_expired_delays();
+    if (!kernel_cpu_interrupts_enabled()) return;
 
     const auto current = thread_table.threads.find(thread_table.current_uid);
     if (current == thread_table.threads.end() || current->second.state != ThreadState::Running) return;

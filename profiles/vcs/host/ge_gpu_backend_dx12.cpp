@@ -20,7 +20,7 @@
 #include <unordered_set>
 #include <vector>
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(PSPRECOMP_HEADLESS)
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -36,7 +36,7 @@
 
 namespace vcs {
 
-#if defined(_WIN32)
+#if defined(_WIN32) && !defined(PSPRECOMP_HEADLESS)
 namespace {
 
 using Microsoft::WRL::ComPtr;

@@ -583,7 +583,7 @@ void install_project2dfx(psprecomp::Runtime &runtime,
     g_ini_path=ini_path;g_cfg=read_config(ini_path);g_camera_candidates.clear();g_hot_camera=nullptr;g_hot_camera_revision=0u;g_hot_camera_target=0u;g_last_rendered_vblank=std::numeric_limits<std::uint64_t>::max();
     // Both the lights and the draw-distance patch read and write VCS game
     // structures by address; on LCS they would corrupt unrelated memory.
-    if(kTitleLcs){g_cfg.enabled=false;std::cerr<<"[Project2DFX] not available for LCS\n";return;}
+    if(!kTitleVcs){g_cfg.enabled=false;std::cerr<<"[Project2DFX] disabled outside VCS\n";return;}
     // O draw distance tem [DrawDistance] Enabled proprio e nao faz parte do
     // Project2DFX original, entao instala antes do return abaixo. Estava depois
     // dele, o que amarrava um recurso independente ao outro sem dizer nada.

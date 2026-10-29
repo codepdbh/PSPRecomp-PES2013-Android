@@ -4883,7 +4883,7 @@ bool render_ge_primitive(psprecomp::GuestMemory &memory,
         // menus share this target and have their own bottom-left items.
         // Depth-tested draws included: the frame and markers of the radar are.
         // The coordinates are VCS's HUD layout; LCS keeps its radar where it is.
-        if (!kTitleLcs && hud.gameplay_world && !setup.clear_mode) {
+        if (kTitleVcs && hud.gameplay_world && !setup.clear_mode) {
             float min_y = vertices.front().y;
             for (const Vertex &vertex : vertices) min_y = std::min(min_y, vertex.y);
             // The map tiles overhang the radar and are cut to it by the

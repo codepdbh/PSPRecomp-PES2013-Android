@@ -623,6 +623,39 @@ static void test_materialized_function_pointer_discovery() {
     require(it->second == "materialized_code_pointer", "Materialized executable pointer source was not classified");
 }
 
+static void test_jump_table_in_rwx_segment() {
+    auto bytes = make_function_pointer_test_elf();
+    bytes.resize(0x200u, 0u);
+    put32(bytes, 0x80u, 0x03E00008u);  // entry returns; no materialized callback
+    put32(bytes, 0x84u, 0u);
+    put32(bytes, 68u, 0x38u); put32(bytes, 72u, 0x38u); put32(bytes, 76u, 7u);
+    put32(bytes, 0xB0u, 0x08804020u);  // table-only callback target
+    put32(bytes, 0xB4u, 0x08804030u);  // data pointer, must not become code
+    constexpr char strings[] = "\0.text\0.rodata\0.shstrtab\0";
+    for (std::size_t i = 0; i < sizeof(strings); ++i) bytes[0xC0u + i] = strings[i];
+    put32(bytes, 32u, 0x140u); put16(bytes, 48u, 4u); put16(bytes, 50u, 3u);
+    const auto section = [&](std::size_t index, std::uint32_t name, std::uint32_t type,
+                             std::uint32_t flags, std::uint32_t address,
+                             std::uint32_t offset, std::uint32_t size) {
+        const auto at = 0x140u + index * 40u;
+        put32(bytes, at, name); put32(bytes, at + 4u, type); put32(bytes, at + 8u, flags);
+        put32(bytes, at + 12u, address); put32(bytes, at + 16u, offset); put32(bytes, at + 20u, size);
+        put32(bytes, at + 32u, 4u);
+    };
+    section(1u, 1u, 1u, 6u, 0x08804000u, 0x80u, 0x30u);
+    section(2u, 7u, 1u, 2u, 0x08804030u, 0xB0u, 8u);
+    section(3u, 15u, 3u, 0u, 0u, 0xC0u, sizeof(strings));
+    auto elf = psprecomp::Elf32Image::from_bytes(std::move(bytes), "rwx_jump_table.elf");
+    psprecomp::GuestMemory memory;
+    (void)elf.load_and_relocate(memory);
+    const auto program = psprecomp::analyze_program(elf, memory, psprecomp::kDefaultPspUserLoadBase);
+    require(program.seeds.contains(0x08804020u), "Callback stored in .rodata inside RWX segment was missed");
+    require(program.covered_labels.contains(0x08804020u), "Jump-table-only target was not translated");
+    require(!psprecomp::is_executable_address(program.executable_ranges, 0x08804030u),
+            "Non-executable allocated section was treated as Allegrex code");
+    require(!program.seeds.contains(0x08804030u), "Data pointer was incorrectly registered as code");
+}
+
 static void test_vfpu_branch_cfg_discovery() {
     const auto bytes = make_vfpu_branch_test_elf();
     auto elf = psprecomp::Elf32Image::from_bytes(bytes, "vfpu_branch_cfg.elf");
@@ -1642,6 +1675,7 @@ int main() {
         test_automatic_cfg_and_codegen();
         test_automatic_cross_unit_tail_chaining();
         test_materialized_function_pointer_discovery();
+        test_jump_table_in_rwx_segment();
 
         auto relocation_elf = psprecomp::Elf32Image::from_bytes(make_relocation_test_prx(), "synthetic_relocation.prx");
         psprecomp::GuestMemory relocation_memory;

@@ -43,8 +43,18 @@ try {
     if (-not $SkipCodegen) {
         $generator = Join-Path $ToolDirectory 'profiles/pes2013/Release/pes2013_recomp.exe'
         if (-not (Test-Path $generator)) { throw "Build pes2013_recomp first: $generator" }
-        & $generator $elf --auto (Join-Path $profile 'generated') $identity.load_base $identity.unit_span_bytes --generic
-        if ($LASTEXITCODE -ne 0) { throw 'PES generic code generation failed.' }
+        # The generator writes timing diagnostics to stderr. Windows PowerShell
+        # treats redirected native stderr as error records even on exit code 0.
+        $savedPreference = $ErrorActionPreference
+        try {
+            $ErrorActionPreference = 'Continue'
+            & $generator $elf --auto (Join-Path $profile 'generated') $identity.load_base $identity.unit_span_bytes --generic 2>&1 |
+                ForEach-Object { $_.ToString() }
+            $generationExit = $LASTEXITCODE
+        } finally {
+            $ErrorActionPreference = $savedPreference
+        }
+        if ($generationExit -ne 0) { throw "PES generic code generation failed (exit $generationExit)." }
     }
 } finally {
     Pop-Location

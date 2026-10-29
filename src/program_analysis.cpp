@@ -20,7 +20,20 @@ std::vector<ExecutableRange> executable_ranges_for(const Elf32Image &elf, std::u
         const std::uint32_t start = elf.segment_runtime_address(i, load_base);
         const std::uint64_t end64 = static_cast<std::uint64_t>(start) + segment.file_size;
         if (end64 > std::numeric_limits<std::uint32_t>::max()) continue;
-        ranges.push_back({start, static_cast<std::uint32_t>(end64)});
+        // Some PSP ET_EXEC images place .text and .rodata in one RWX load
+        // segment. Prefer allocated executable sections when available, so
+        // absolute jump-table entries in .rodata are not decoded as MIPS J.
+        bool section_ranges_found = false;
+        for (const auto &section : elf.sections()) {
+            if (section.type != 1u || (section.flags & 6u) != 6u || section.size == 0u) continue;
+            const auto section_start = elf.section_runtime_address(section, load_base);
+            const auto section_end = static_cast<std::uint64_t>(section_start) + section.size;
+            if (section_start < start || section_end > end64) continue;
+            ranges.push_back({section_start, static_cast<std::uint32_t>(section_end)});
+            section_ranges_found = true;
+        }
+        // Stripped binaries and synthetic fixtures may have no section table.
+        if (!section_ranges_found) ranges.push_back({start, static_cast<std::uint32_t>(end64)});
     }
     std::sort(ranges.begin(), ranges.end(), [](const auto &a, const auto &b) { return a.start < b.start; });
     return ranges;
@@ -275,6 +288,15 @@ void collect_relocated_data_code_pointers(const Elf32Image &elf,
                                           std::uint32_t load_base,
                                           const std::vector<ExecutableRange> &ranges,
                                           std::map<std::uint32_t, std::string> &seeds) {
+    for (const auto &section : elf.sections()) {
+        const bool contains_file_data = section.type == 1u || section.type == 14u || section.type == 15u;
+        if (!contains_file_data || (section.flags & 2u) == 0u || (section.flags & 4u) != 0u || section.size < 4u)
+            continue;
+        const auto start = elf.section_runtime_address(section, load_base);
+        if ((start & 3u) != 0u || !memory.contains(start, section.size)) continue;
+        for (std::uint32_t offset = 0u; offset < (section.size & ~3u); offset += 4u)
+            add_seed(seeds, ranges, memory.load32(start + offset), "allocated_data_section_code_pointer");
+    }
     for (std::size_t i = 0; i < elf.segments().size(); ++i) {
         const auto &segment = elf.segments()[i];
         if (segment.type != 1u || (segment.flags & 1u) != 0u || segment.file_size < 4u) continue;

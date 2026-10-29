@@ -11,6 +11,6 @@ jobs:
       - name: Configure without commercial inputs
         run: cmake -S . -B build -DPSPRECOMP_PROFILE=pes2013 -DPSPRECOMP_BUILD_TESTS=ON -DPSPRECOMP_MSVC_MP_JOBS=2
       - name: Build framework tests and PES generator
-        run: cmake --build build --config Release --target psprecomp_tests psp_analyze pes2013_recomp --parallel 2
+        run: cmake --build build --config Release --target psprecomp_tests pes2013_kernel_tests psp_analyze pes2013_recomp --parallel 2
       - name: Run framework tests
         run: ctest --test-dir build -C Release --output-on-failure
