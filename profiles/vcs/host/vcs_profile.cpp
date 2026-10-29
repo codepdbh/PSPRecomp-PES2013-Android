@@ -4,6 +4,7 @@
 #include "psp_kernel_library.hpp"
 #include "psp_power_services.hpp"
 #include "psp_umd_services.hpp"
+#include "psp_impose_services.hpp"
 #include "audio_output.hpp"
 #include "display_window.hpp"
 #include "vcs_camera_input.hpp"
@@ -10679,6 +10680,7 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
     register_lcs_system_extras(runtime);
     if (kTitlePes2013) {
         install_power_clock_services(runtime);
+        install_impose_language_services(runtime);
         const bool medium_present = std::filesystem::is_regular_file(runtime.game_root() / "PSP_GAME/PARAM.SFO");
         install_umd_services(runtime, medium_present, {
             [](std::int32_t uid) {

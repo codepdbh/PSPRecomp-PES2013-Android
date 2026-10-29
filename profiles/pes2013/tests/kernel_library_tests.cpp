@@ -1,5 +1,6 @@
 #include "psp_kernel_library.hpp"
 #include "psp_power_services.hpp"
+#include "psp_impose_services.hpp"
 #include "psprecomp/runtime.hpp"
 
 #include <iostream>
@@ -70,6 +71,26 @@ int main() {
         require(ctx.gpr[2u] == 0x800001FEu, "Clock setter accepted CPU frequency above PLL");
         rt.invoke_import("scePower", 0xFEE03A2Fu, ctx);
         require(ctx.gpr[2u] == 266u, "Invalid clock request changed the previous CPU frequency");
+
+        vcs::install_impose_language_services(rt);
+        ctx.set_gpr(4u, 3u); ctx.set_gpr(5u, 0u);
+        rt.invoke_import("sceImpose", 0x36AA6E91u, ctx);
+        require(ctx.gpr[2u] == 0u, "Language setter failed");
+        ctx.set_gpr(4u, target); ctx.set_gpr(5u, target + 4u);
+        rt.invoke_import("sceImpose", 0x24FD7BCFu, ctx);
+        require(rt.memory().load32(target) == 3u && rt.memory().load32(target + 4u) == 0u,
+                "Language query did not preserve guest language and confirm button");
+        psprecomp::Runtime separate;
+        vcs::install_impose_language_services(separate);
+        separate.cpu().set_gpr(4u, target); separate.cpu().set_gpr(5u, target + 4u);
+        separate.invoke_import("sceImpose", 0x24FD7BCFu, separate.cpu());
+        require(separate.memory().load32(target) == 1u && separate.memory().load32(target + 4u) == 1u,
+                "Language state leaked between runtimes");
+        separate.memory().store32(target, 0xAABBCCDDu);
+        separate.cpu().set_gpr(5u, 0x09FFFFFFu);
+        separate.invoke_import("sceImpose", 0x24FD7BCFu, separate.cpu());
+        require(separate.stopped() && separate.memory().load32(target) == 0xAABBCCDDu,
+                "Invalid language output buffer caused a partial write");
 
         ctx.set_gpr(4u, 0x09FFFFFFu); ctx.set_gpr(5u, target); ctx.set_gpr(6u, 8u);
         rt.invoke_import("Kernel_Library", 0x1839852Au, ctx);

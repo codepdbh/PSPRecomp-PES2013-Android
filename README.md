@@ -23,7 +23,7 @@ hacia código nativo, con Android ARM64 como plataforma objetivo.
 | Copia analizada | PSP USA, `ULUS10597` |
 | EBOOT traducido | 161 unidades C++; análisis de tablas de saltos corregido |
 | Compilación nativa | Windows x64 y Android ARM64 |
-| Prueba en S25 Ultra | Ejecuta el inicio y detecta el primer servicio pendiente |
+| Prueba en S25 Ultra | Supera UMD e idioma; alcanza la creación de un mutex ligero |
 | Módulos `.ovl` | 69 extraídos; 28 con código, 41 con texto vacío |
 | Traducción experimental de overlays | 576 unidades C++; 604 archivos comprobados para ARM64 |
 | Servicios de arranque | SDK, interrupciones, memoria, relojes y UMD con callback ejecutado en PC |

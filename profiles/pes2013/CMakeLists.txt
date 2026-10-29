@@ -3,7 +3,7 @@ add_executable(pes2013_recomp ../vcs/tools/vcs_codegen_main.cpp)
 target_link_libraries(pes2013_recomp PRIVATE psprecomp_core)
 target_compile_definitions(pes2013_recomp PRIVATE PSPRECOMP_GENERIC_CODEGEN=1)
 
-add_library(pes2013_kernel_library STATIC ../vcs/host/psp_kernel_library.cpp ../vcs/host/psp_power_services.cpp ../vcs/host/psp_umd_services.cpp)
+add_library(pes2013_kernel_library STATIC ../vcs/host/psp_kernel_library.cpp ../vcs/host/psp_power_services.cpp ../vcs/host/psp_umd_services.cpp ../vcs/host/psp_impose_services.cpp)
 target_include_directories(pes2013_kernel_library PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}/../vcs/host")
 target_link_libraries(pes2013_kernel_library PUBLIC psprecomp_core)
 set_target_properties(pes2013_kernel_library PROPERTIES POSITION_INDEPENDENT_CODE ON)

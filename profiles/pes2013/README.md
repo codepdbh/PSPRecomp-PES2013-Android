@@ -157,22 +157,27 @@ El framework también tiene una regresión sintética de tablas de saltos en `.r
 dentro de un segmento RWX, el caso que bloqueaba PES en `0x08804920`.
 
 La prueba Windows con el EBOOT regenerado registra 138.368 entradas AOT y
-alcanza 38 servicios distintos (58 llamadas), incluida la inicialización de
+alcanza 45 servicios distintos (66 llamadas), incluida la inicialización de
 pantalla y GE. El estado UMD del disco montado permite superar la espera inicial:
 la traza confirma que se ejecuta el callback del juego en `0x0880B9B8` y se
 restaura su contexto para continuar en `0x0880B9A0`.
-Su punto de detención actual es `sceImpose::sceImposeSetLanguageMode`
-(`0x36AA6E91`, PC `0x08A8643C`). Todavía no se alcanza el menú.
+El ajuste de idioma y botón de confirmación ya conserva el estado solicitado
+por el juego. Su punto de detención actual es
+`ThreadManForUser::sceKernelCreateLwMutex` (`0x19CFF145`, PC `0x08A85F4C`).
+Todavía no se alcanza el menú.
 
 `pes2013_umd_tests` comprueba presencia del medio, máscaras de espera,
 notificaciones y cesión del contexto al callback. El modelo se limita a disco
 fijo: no reproduce cambios de medio ni temporizadores de esperas pendientes.
 Si una condición no se cumple, detiene el diagnóstico en vez de declarar éxito.
-Estos cambios se comprobaron en PC; las pruebas en el S25 quedan pendientes.
+Estos cambios se comprobaron en PC y en el S25 Ultra conectado por ADB: ambos
+alcanzan la misma detención. Esta es una prueba sin ventana y sin audio;
+no valida todavía gráficos visibles, controles táctiles ni rendimiento jugable.
 
 Referencias de nombres y NIDs para las implementaciones independientes:
 [Kernel/Interrupts](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/sceKernelInterrupt.cpp),
 [Power](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/scePower.cpp),
+[Idioma de interfaz PSP](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/sceImpose.cpp),
 [UMD API](https://github.com/pspdev/pspsdk/blob/master/src/umd/pspumd.h),
 [UMD y callbacks](https://github.com/hrydgard/ppsspp/blob/master/Core/HLE/sceUmd.cpp).
 
