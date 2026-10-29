@@ -165,10 +165,14 @@ El ajuste de idioma y botón de confirmación ya conserva el estado solicitado
 por el juego. Los mutex ligeros y alarmas permiten arrancar los hilos CRI y de
 audio. El cargador del juego lee los CPK, descomprime los módulos y ejecuta
 `bootset.ovl` y `memorycard.ovl` mediante el banco AOT.
-El bloqueo observado después es un acceso al scratchpad PSP (`0x00010000`):
-su soporte tiene pruebas locales y está pendiente de comprobar en el juego.
-El estado actualizado de la ejecución está en [PROGRESS](../../docs/PROGRESS.md).
-Todavía no se alcanza el menú.
+El scratchpad y las instrucciones MADD/MSUB ya superan ese punto. El juego
+alcanza defaultdataset.ovl y title.ovl; en el S25 se ha verificado la pantalla
+de titulo de PES 2013 y, al avanzar, la solicitud de select1.ovl.
+Se incorpora MP3 con minimp3 (CC0), DMA, estado de hilos/eventos y espera
+contendida de mutex con temporizador. VBlank entrega todos los submanejadores
+registrados: PES no usa la ranura 15 de VCS.
+El estado actualizado esta en [PROGRESS](../../docs/PROGRESS.md).
+Todavia no se ha verificado un partido jugable.
 
 `pes2013_umd_tests` comprueba presencia del medio, máscaras de espera,
 notificaciones y cesión del contexto al callback. El modelo se limita a disco

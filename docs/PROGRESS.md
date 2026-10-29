@@ -1,6 +1,6 @@
 # Estado del port: 29 de octubre de 2026
 
-PES todav√≠a no llega al men√∫ y no hay APK jugable.
+PES alcanza su pantalla de titulo en S25; aun no hay un partido jugable verificado.
 
 ## Verificado
 
@@ -40,26 +40,26 @@ PES todav√≠a no llega al men√∫ y no hay APK jugable.
 ## Estado del arranque actual
 
 El scratchpad, las operaciones Allegrex MADD/MSUB, DMA, las esperas de mutex
-con temporizador y las consultas de hilos/eventos ya permiten ejecutar tambiÈn
-defaultdataset y 	itle. El logo KONAMI se verificÛ visualmente en el S25.
-Se aÒadiÛ decodificaciÛn MP3 con minimp3 (CC0), probada con un tono original
+con temporizador y las consultas de hilos/eventos ya permiten ejecutar tambi√©n
+defaultdataset y title. El logo KONAMI se verific√≥ visualmente en el S25.
+Se a√±adi√≥ decodificaci√≥n MP3 con minimp3 (CC0), probada con un tono original
 sin datos comerciales; las seis suites portables pasan en Windows.
 
-La introducciÛn quedaba detenida con el b˙fer MPEG lleno: el host despachaba
-˙nicamente el submanejador VBlank 15 usado por VCS. PES registra otro n˙mero.
+La introducci√≥n quedaba detenida con el b√∫fer MPEG lleno: el host despachaba
+√∫nicamente el submanejador VBlank 15 usado por VCS. PES registra otro n√∫mero.
 Ahora se despachan todos los manejadores VBlank habilitados en orden. La prueba
-PC ya consume el b˙fer, llega al final del archivo y sale de la decodificaciÛn.
-La revisiÛn Android est· instalada: muestra la pantalla de tÌtulo de PES 2013
+PC ya consume el b√∫fer, llega al final del archivo y sale de la decodificaci√≥n.
+La revisi√≥n Android est√° instalada: muestra la pantalla de t√≠tulo de PES 2013
 y al pulsar avanzar intenta ejecutar select1.ovl. El resolver detuvo ese
-salto porque faltaba enlazarlo. Se est·n compilando los mÛdulos de selecciÛn,
-formaciÛn, partido y resultados. TodavÌa no se ha verificado un partido jugable.
+salto porque faltaba enlazarlo. Se est√°n compilando los m√≥dulos de selecci√≥n,
+formaci√≥n, partido y resultados. Todav√≠a no se ha verificado un partido jugable.
 
-Los APK siguen siendo artefactos locales. Las mÈtricas del arranque no
+Los APK siguen siendo artefactos locales. Las m√©tricas del arranque no
 representan el rendimiento de un partido.
 
 ## Trabajo que sigue
 
-1. Verificar la salida de la introducciÛn en PC y S25 y resolver el siguiente bloqueo.
+1. Verificar la salida de la introducci√≥n en PC y S25 y resolver el siguiente bloqueo.
 2. Llegar al men√∫ con los overlays bootset, memorycard, enter, title y defaultdataset.
 3. Enlazar los m√≥dulos de selecci√≥n y partido, validando su cambio en ejecuci√≥n.
 4. Revisar las instrucciones que fallen durante ejecuci√≥n; los recuentos est√°ticos
