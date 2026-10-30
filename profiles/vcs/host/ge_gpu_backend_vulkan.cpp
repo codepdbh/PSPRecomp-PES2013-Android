@@ -1,5 +1,6 @@
 #include "ge_gpu_backend.hpp"
 #include "framebuffer_target.hpp"
+#include "clear_frame_policy.hpp"
 #include "ge_gpu_vulkan_shaders.hpp"
 #include "vcs_config.hpp"
 
@@ -107,6 +108,11 @@ struct VulkanPreview {
     bool fence_waited{};
     std::uint64_t in_flight_vblank{};
     bool in_flight_presents{};   // false: a world-only frame, no readback
+#if defined(PSPRECOMP_TITLE_PES2013)
+    bool in_flight_clear_only{};
+    std::uint64_t deferred_clear_vblank{};
+    ClearFramePolicy clear_policy;
+#endif
     unsigned consecutive_2d_frames{};
     VkInstance instance{VK_NULL_HANDLE};
     VkPhysicalDevice physical{VK_NULL_HANDLE};
@@ -1479,6 +1485,16 @@ bool collect_in_flight(VulkanPreview &s) {
         s.frame_in_flight = false;
         return false;
     }
+#if defined(PSPRECOMP_TITLE_PES2013)
+    // A PSP frame can arrive as a clear list followed by its drawing list.
+    // Do not expose the intermediate clear if the next list is already queued.
+    // Consecutive clears and a clear with no successor are still presented.
+    if (s.clear_policy.defer_collected(s.in_flight_clear_only, s.report.game_frames != 0u)) {
+        s.deferred_clear_vblank = s.in_flight_vblank;
+        s.frame_in_flight = false;
+        return false;
+    }
+#endif
     const std::uint64_t copy_start = steady_ns();
     std::memcpy(s.frame_rgba.data(), s.readback.mapped, s.frame_rgba.size());
     g_frame_timing.copy_ns += steady_ns() - copy_start;
@@ -1495,8 +1511,21 @@ bool ge_gpu_backend_finish_color_frame(std::uint64_t vblank) noexcept {
     VulkanPreview &s = state();
     // The previous frame has had a whole vblank of emulation to finish on the
     // GPU; collect it now, then submit this one without waiting for it.
-    const bool frame_ready = s.enabled && collect_in_flight(s);
-    (void)submit_color_frame(vblank);
+    bool frame_ready = s.enabled && collect_in_flight(s);
+    const bool submitted = submit_color_frame(vblank);
+#if defined(PSPRECOMP_TITLE_PES2013)
+    if (s.clear_policy.release_without_submission(submitted)) {
+        // Nothing will overwrite the mapped readback: this really was the
+        // final clear, so show it rather than holding an old image forever.
+        std::memcpy(s.frame_rgba.data(), s.readback.mapped, s.frame_rgba.size());
+        ++s.report.game_frames;
+        s.report.game_frame_readback_bytes = s.frame_rgba.size();
+        s.report.game_frame_vblank = s.deferred_clear_vblank;
+        frame_ready = true;
+    }
+#else
+    (void)submitted;
+#endif
     return frame_ready;
 }
 
@@ -1649,6 +1678,10 @@ bool submit_color_frame(std::uint64_t vblank) noexcept {
     // world, and LCS showed a black screen. Such a frame renders the world
     // pass only and presents nothing.
     const bool presents = !display_batches.empty();
+#if defined(PSPRECOMP_TITLE_PES2013)
+    const bool clear_only = presents && std::all_of(display_batches.begin(), display_batches.end(),
+        [](const DrawBatch &batch) { return batch.draw.clear_mode; });
+#endif
     if (vertex_bytes == 0u || (!presents && world_batches.empty()) ||
         vertex_bytes > kVertexCapacity) return false;
     // Menus are rendered here too. They used to be handed back to the software
@@ -1885,6 +1918,9 @@ bool submit_color_frame(std::uint64_t vblank) noexcept {
     submit.pCommandBuffers = &s.command;
     result = vkQueueSubmit(s.queue, 1u, &submit, s.fence);
     if (result != VK_SUCCESS) { log_error("vkQueueSubmit", result); return false; }
+#if defined(PSPRECOMP_TITLE_PES2013)
+    s.in_flight_clear_only = clear_only;
+#endif
     s.frame_in_flight = true;
     s.in_flight_presents = presents;
     s.fence_waited = false;

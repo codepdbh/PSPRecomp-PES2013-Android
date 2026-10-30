@@ -5,8 +5,12 @@
 - En el S25, la pantalla de creación de la tarjeta ya se ve con Vulkan. El
   teclado de Android aceptó un nombre de prueba y el juego avanzó hasta pedir
   nacionalidad y el editor de rostro. El módulo `edit.ovl` se ejecutó en el S25.
-  Se detectó parpadeo con fotogramas negros en el editor; todavía no hay una
-  prueba completa de partido.
+  El parpadeo del editor se redujo al diferir los lotes de solo borrado: ocho
+  capturas consecutivas mantuvieron la imagen en el S25. Al salir del editor,
+  la ejecución pidió la entrada indirecta `0x089D804C`, ahora añadida para su
+  traducción. El juego ya llegó al menú principal en el S25 y solicitó
+  `sceAtracSetDataAndGetID`; se añadió ese servicio y está pendiente la prueba
+  en el teléfono. Todavía no hay una prueba completa de partido.
 - Android conserva el último fotograma de Vulkan sin volver a copiarlo a la
   ventana cuando no hay una imagen nueva. Los controles usan un bloqueo propio.
 - La selección de superficies Vulkan cuenta los lotes por destino y evita

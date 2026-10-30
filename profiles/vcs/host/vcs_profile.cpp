@@ -9041,11 +9041,10 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
         return &atrac_contexts[id];
     };
 
-    runtime.register_hle("sceAtrac3plus", 0x0FAE370Eu,
-        [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+    const auto set_atrac_buffer = [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx, bool whole_buffer) {
             const std::uint32_t buffer = ctx.gpr[4];
             const std::uint32_t read_size = ctx.gpr[5];
-            const std::uint32_t buffer_size = ctx.gpr[6];
+            const std::uint32_t buffer_size = whole_buffer ? read_size : ctx.gpr[6];
             if (read_size > buffer_size) { ctx.set_gpr(2, kAtracErrorIncorrectReadSize); return; }
             if (read_size < 12u || !rt.memory().contains(buffer, read_size)) {
                 ctx.set_gpr(2, kAtracErrorUnknownFormat); return;
@@ -9083,6 +9082,15 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
                           << " source=\"" << state.source_path.string() << "\"\n";
             }
             ctx.set_gpr(2, static_cast<std::uint32_t>(id));
+        };
+    runtime.nids().add("sceAtrac3plus", 0x7A20E7AFu, "sceAtracSetDataAndGetID");
+    runtime.register_hle("sceAtrac3plus", 0x0FAE370Eu,
+        [set_atrac_buffer](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+            set_atrac_buffer(rt, ctx, false);
+        });
+    runtime.register_hle("sceAtrac3plus", 0x7A20E7AFu,
+        [set_atrac_buffer](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
+            set_atrac_buffer(rt, ctx, true);
         });
 
     runtime.register_hle("sceAtrac3plus", 0x61EB33F5u,
@@ -11898,6 +11906,19 @@ bool run_profile_self_tests(std::string &error) {
             atrac_context.set_gpr(4u, 0u);
             wlan_runtime.invoke_import("sceAtrac3plus", 0x61EB33F5u, atrac_context);
             require(atrac_context.gpr[2] == 0u, "sceAtracReleaseAtracID failed for a valid context");
+            atrac_context = {};
+            atrac_context.set_gpr(4u, atrac_buffer);
+            atrac_context.set_gpr(5u, 0x100u);
+            atrac_context.set_gpr(6u, 0u); // Whole-buffer API must not read the third argument.
+            wlan_runtime.invoke_import("sceAtrac3plus", 0x7A20E7AFu, atrac_context);
+            require(!wlan_runtime.stopped() && atrac_context.gpr[2] == 0u &&
+                        atrac_contexts[0].buffer_size == 0x100u &&
+                        atrac_contexts[0].initial_read_size == 0x100u,
+                    "sceAtracSetDataAndGetID did not initialize the complete buffer");
+            atrac_context = {};
+            atrac_context.set_gpr(4u, 0u);
+            wlan_runtime.invoke_import("sceAtrac3plus", 0x61EB33F5u, atrac_context);
+            require(atrac_context.gpr[2] == 0u, "Whole-buffer ATRAC id did not release");
 
             constexpr std::uint32_t sas_core = 0x08820000u;
             constexpr std::uint32_t sas_data = 0x08821000u;

@@ -3,3 +3,5 @@
 0x08A3F110
 # Direct function pointer in math/physics model dispatcher (jalr s2)
 0x0880CF5C
+# Indirect entry reached after the face editor on ULUS10597.
+0x089D804C
