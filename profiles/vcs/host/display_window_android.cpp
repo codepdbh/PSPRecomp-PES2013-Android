@@ -18,7 +18,8 @@ void android_game_runtime_set_status(const char *status);
 
 namespace vcs {
 namespace {
-std::mutex g_mutex;
+std::mutex g_window_mutex;
+std::mutex g_input_mutex;
 ANativeWindow *g_window{};
 HostInputState g_input{};
 float g_camera_dx{};
@@ -49,8 +50,8 @@ void present_rgba_locked(const std::byte *pixels, std::uint32_t width,
     // thread that runs the game. Geometry is only set when it changes, since
     // doing so can reallocate the window's buffer queue.
     if (width != g_buffer_width || height != g_buffer_height) {
-        ANativeWindow_setBuffersGeometry(g_window, static_cast<int32_t>(width),
-                                        static_cast<int32_t>(height), WINDOW_FORMAT_RGBA_8888);
+        if (ANativeWindow_setBuffersGeometry(g_window, static_cast<int32_t>(width),
+                                           static_cast<int32_t>(height), WINDOW_FORMAT_RGBA_8888) != 0) return;
         g_buffer_width = width;
         g_buffer_height = height;
     }
@@ -72,7 +73,7 @@ void present_rgba_locked(const std::byte *pixels, std::uint32_t width,
 } // namespace
 
 void display_window_set_surface(ANativeWindow *window) noexcept {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(g_window_mutex);
     if (window != nullptr) ANativeWindow_acquire(window);
     if (g_window != nullptr) ANativeWindow_release(g_window);
     g_window = window;
@@ -81,18 +82,18 @@ void display_window_set_surface(ANativeWindow *window) noexcept {
 }
 
 void display_window_set_input(const HostInputState &input) noexcept {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(g_input_mutex);
     g_input = input;
 }
 
 void display_window_add_camera_motion(float dx, float dy) noexcept {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(g_input_mutex);
     g_camera_dx += dx;
     g_camera_dy += dy;
 }
 
 void display_window_set_camera_stick(int x, int y) noexcept {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(g_input_mutex);
     g_camera_stick_x = std::clamp(x, -127, 127);
     g_camera_stick_y = std::clamp(y, -127, 127);
 }
@@ -102,7 +103,7 @@ void display_window_start() {}
 void display_window_set_status(const char *) {}
 void display_window_set_aspect_lock(bool) noexcept {}
 DisplayWindowSurface display_window_surface() {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(g_window_mutex);
     return {g_window, nullptr, g_window ? static_cast<std::uint32_t>(ANativeWindow_getWidth(g_window)) : 0u,
             g_window ? static_cast<std::uint32_t>(ANativeWindow_getHeight(g_window)) : 0u};
 }
@@ -111,7 +112,7 @@ void display_window_present(const psprecomp::GuestMemory &memory,
                             const FramebufferDescription &description) {
     try {
         const std::vector<std::byte> rgba = decode_framebuffer_rgba(memory, description);
-        std::lock_guard lock(g_mutex);
+        std::lock_guard lock(g_window_mutex);
         present_rgba_locked(rgba.data(), description.width, description.height);
     } catch (const std::exception &error) {
         __android_log_print(ANDROID_LOG_WARN, "VCSAndroid", "frame presentation: %s", error.what());
@@ -123,7 +124,7 @@ void display_window_present_rgba(std::span<const std::byte> rgba,
     if (rgba.size() < static_cast<std::size_t>(width) * height * 4u) return;
     const auto start = std::chrono::steady_clock::now();
     {
-        std::lock_guard lock(g_mutex);
+        std::lock_guard lock(g_window_mutex);
         present_rgba_locked(rgba.data(), width, height);
     }
     // Time spent handing the frame to the window, logged every 120 presents.
@@ -138,15 +139,15 @@ void display_window_present_rgba(std::span<const std::byte> rgba,
 }
 
 std::uint32_t display_window_buttons() {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(g_input_mutex);
     return g_input.buttons;
 }
 void display_window_analog(std::uint8_t &x, std::uint8_t &y) {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(g_input_mutex);
     x = g_input.analog_x; y = g_input.analog_y;
 }
 HostInputState display_window_input() {
-    std::lock_guard lock(g_mutex);
+    std::lock_guard lock(g_input_mutex);
     HostInputState input = g_input;
     // The motion is drained here, once per poll, like the desktop's mouse.
     input.camera_x = camera_response(g_camera_dx);

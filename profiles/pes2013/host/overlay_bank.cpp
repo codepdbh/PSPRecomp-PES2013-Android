@@ -14,6 +14,14 @@ void install_overlay_bank(psprecomp::Runtime &runtime) {
     runtime.set_code_resolver([active, lowest_base](psprecomp::Runtime &rt, std::uint32_t pc) {
         pc = rt.memory().canonical(pc);
         if (pc < lowest_base) return;
+        // Most dispatches in an overlay stay in the already active module.
+        // Check those few headers first, rather than scanning the full catalog
+        // for every generated block, while still detecting a replaced slot.
+        for (const auto *module : *active) {
+            if (pc < module->base + 64u || pc >= module->base + 64u + module->text_size) continue;
+            const auto *header = rt.memory().raw_pointer(module->base, 64u);
+            if (header && std::memcmp(header, module->header.data(), 64u) == 0) return;
+        }
         const auto modules = generated_overlay_modules();
         for (const auto &module : modules) {
             if (pc < module.base + 64u || pc >= module.base + 64u + module.text_size) continue;

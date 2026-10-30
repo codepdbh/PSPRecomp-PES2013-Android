@@ -1,5 +1,17 @@
 # Estado del port: 29 de octubre de 2026
 
+## Rendimiento: 30 de octubre de 2026
+
+- Android conserva el último fotograma de Vulkan sin volver a copiarlo a la
+  ventana cuando no hay una imagen nueva. Los controles usan un bloqueo propio.
+- La selección de superficies Vulkan cuenta los lotes por destino y evita
+  compararlos todos entre sí. La resolución de overlays consulta primero los
+  módulos activos, conservando la comprobación de su cabecera.
+- Las siete pruebas portables pasan y la biblioteca Android ARM64 compila con
+  optimización. La nueva versión aún no se ha medido en el S25 durante un partido.
+- Vulkan sigue usando una lectura de la imagen de GPU a CPU para presentarla en
+  Android. La presentación directa mediante swapchain sigue pendiente.
+
 PES alcanza su pantalla de titulo en S25; aun no hay un partido jugable verificado.
 
 ## Verificado

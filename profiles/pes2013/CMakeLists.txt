@@ -33,6 +33,9 @@ if(PSPRECOMP_BUILD_TESTS AND PSPRECOMP_BUILD_PROFILE_TESTS)
     target_link_libraries(pes2013_mp3_tests PRIVATE pes2013_kernel_library)
     target_compile_definitions(pes2013_mp3_tests PRIVATE PES2013_MP3_TEST_ASSET="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures/tone.mp3")
     add_test(NAME pes2013_mp3_tests COMMAND pes2013_mp3_tests)
+    add_executable(pes2013_framebuffer_target_tests tests/framebuffer_target_tests.cpp)
+    target_include_directories(pes2013_framebuffer_target_tests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/../vcs/host")
+    add_test(NAME pes2013_framebuffer_target_tests COMMAND pes2013_framebuffer_target_tests)
 endif()
 
 # A clean checkout can build the tools before local game inputs are supplied.

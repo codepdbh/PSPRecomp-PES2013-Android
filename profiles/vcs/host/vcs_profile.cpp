@@ -8539,7 +8539,16 @@ void install_profile(psprecomp::Runtime &runtime, std::uint32_t user_arena_start
             // behaviour for free, and mixing a GDI blit into the same window
             // would fight the presentation engine.
             presented_gpu_frame = true;
-        } else if ((gpu_frame_ready || holding_gpu_frame) &&
+        }
+#if defined(__ANDROID__)
+        else if (holding_gpu_frame && !gpu_frame_ready && ge_gpu_backend_active()) {
+            // The last buffer remains visible in the Android window until a new
+            // one is posted. Reposting it wastes a copy and can block on the
+            // window buffer queue without changing the image.
+            presented_gpu_frame = true;
+        }
+#endif
+        else if ((gpu_frame_ready || holding_gpu_frame) &&
                    (ge_gpu_backend_active() || gpu_color_preview_enabled())) {
             const GeGpuBackendReport gpu = ge_gpu_backend_report();
             const std::span<const std::byte> rgba = ge_gpu_backend_game_frame_rgba();

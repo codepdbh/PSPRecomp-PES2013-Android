@@ -1,4 +1,5 @@
 #include "ge_gpu_backend.hpp"
+#include "framebuffer_target.hpp"
 #include "ge_gpu_vulkan_shaders.hpp"
 #include "vcs_config.hpp"
 
@@ -1612,15 +1613,11 @@ bool submit_color_frame(std::uint64_t vblank) noexcept {
             // Nothing drawn into the displayed surface: a menu double-buffering
             // between two surfaces every vblank, so the one being displayed is
             // not the one just drawn. Present whichever received the draws.
-            std::uint32_t best = s.display_framebuffer;
-            std::size_t best_count = 0u;
-            for (const DrawBatch &candidate : s.batches) {
-                const std::uint32_t address = candidate.draw.framebuffer_address & 0x001FFFF0u;
-                std::size_t count = 0u;
-                for (const DrawBatch &other : s.batches)
-                    if ((other.draw.framebuffer_address & 0x001FFFF0u) == address) ++count;
-                if (count > best_count) { best = address; best_count = count; }
-            }
+            // There are usually only a few targets, but potentially thousands
+            // of batches. Count each target once rather than rescanning every
+            // batch for every candidate. Preserve first-seen order for ties.
+            const std::uint32_t best = most_used_framebuffer(s.batches, s.display_framebuffer,
+                [](const DrawBatch &batch) { return batch.draw.framebuffer_address; });
             select_target(best, display_batches);
         }
     } catch (...) {

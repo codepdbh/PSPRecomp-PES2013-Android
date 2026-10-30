@@ -5,12 +5,14 @@
 namespace {
 constexpr std::uint32_t base = 0x08E83000u;
 constexpr std::array<std::uint8_t, 8> text_a{1,2,3,4,5,6,7,8}, text_b{8,7,6,5,4,3,2,1};
+unsigned registrations_a{};
 std::uint64_t hash(const auto &bytes) {
     std::uint64_t value = 14695981039346656037ull;
     for (auto byte : bytes) { value ^= byte; value *= 1099511628211ull; }
     return value;
 }
 void register_a(psprecomp::Runtime &rt) {
+    ++registrations_a;
     rt.register_function(base + 64u, +[](psprecomp::Runtime &runtime, psprecomp::AllegrexContext &) {
         runtime.stop("module A executed");
     }, "overlay_a");
@@ -46,6 +48,9 @@ int main() {
         write(rt, 0, text_a);
         rt.run(base + 64u, 3u);
         require(rt.stop_reason() == "module A executed", "First overlay did not activate");
+        rt.run(base + 64u, 3u);
+        require(rt.stop_reason() == "module A executed" && registrations_a == 1u,
+                "Repeated dispatch did not reuse the active module");
         write(rt, 1, text_b);
         rt.run(base + 68u, 3u);
         require(rt.stop_reason() == "module B executed", "Replacement overlay did not activate");
