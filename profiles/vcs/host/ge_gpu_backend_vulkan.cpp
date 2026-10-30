@@ -1609,6 +1609,16 @@ bool submit_color_frame(std::uint64_t vblank) noexcept {
                 s.world_framebuffer_address != s.display_framebuffer)
                 select_target(s.world_framebuffer_address, world_batches);
             select_target(s.display_framebuffer, display_batches);
+#if defined(PSPRECOMP_TITLE_PES2013)
+            // PES can draw a complete menu into the other double-buffered
+            // surface using transformed vertices. In that case "has scene"
+            // alone does not mean a separate compositing pass will follow.
+            if (!display_has_draws) {
+                const auto target = most_used_framebuffer(s.batches, s.display_framebuffer,
+                    [](const DrawBatch &batch) { return batch.draw.framebuffer_address; });
+                select_target(target, display_batches);
+            }
+#endif
         } else {
             // Nothing drawn into the displayed surface: a menu double-buffering
             // between two surfaces every vblank, so the one being displayed is

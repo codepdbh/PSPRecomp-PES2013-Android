@@ -2,6 +2,11 @@
 
 ## Rendimiento: 30 de octubre de 2026
 
+- En el S25, la pantalla de creación de la tarjeta ya se ve con Vulkan. El
+  teclado de Android aceptó un nombre de prueba y el juego avanzó hasta pedir
+  nacionalidad y el editor de rostro. El módulo `edit.ovl` se ejecutó en el S25.
+  Se detectó parpadeo con fotogramas negros en el editor; todavía no hay una
+  prueba completa de partido.
 - Android conserva el último fotograma de Vulkan sin volver a copiarlo a la
   ventana cuando no hay una imagen nueva. Los controles usan un bloqueo propio.
 - La selección de superficies Vulkan cuenta los lotes por destino y evita

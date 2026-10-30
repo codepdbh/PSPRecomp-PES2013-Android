@@ -4,6 +4,7 @@
 #include "overlay_bank.hpp"
 #include "vcs_config.hpp"
 #include "vcs_profile.hpp"
+#include "pes_osk_bridge.hpp"
 #include "psprecomp/common.hpp"
 #include "psprecomp/elf32.hpp"
 #include "psprecomp/sha256.hpp"
@@ -29,6 +30,9 @@ pthread_t worker{};
 bool worker_joinable{};
 std::atomic_bool active{};
 std::atomic_bool cancel{};
+std::mutex osk_mutex;
+std::u16string osk_initial, osk_result;
+bool osk_pending{}, osk_ready{}, osk_accepted{};
 void set_status(std::string value) {
     std::lock_guard lock(state_mutex); status = std::move(value);
     __android_log_print(ANDROID_LOG_INFO, "PES2013", "%s", status.c_str());
@@ -49,6 +53,7 @@ void stop_game() {
         std::this_thread::sleep_for(std::chrono::milliseconds(10));
     }
     if (worker_joinable) { pthread_join(worker, nullptr); worker_joinable = false; }
+    pes_osk_reset();
 }
 void play(std::filesystem::path root, std::filesystem::path settings_dir) {
     std::unique_ptr<psprecomp::Runtime> runtime;
@@ -118,6 +123,37 @@ void play(std::filesystem::path root, std::filesystem::path settings_dir) {
     }
     active = false;
 }
+}
+void pes_osk_begin(const std::u16string &initial) {
+    std::lock_guard lock(osk_mutex);
+    osk_initial = initial; osk_result.clear(); osk_pending = true; osk_ready = false;
+}
+bool pes_osk_take_result(std::u16string &text, bool &accepted) {
+    std::lock_guard lock(osk_mutex);
+    if (!osk_ready) return false;
+    text = osk_result; accepted = osk_accepted; osk_ready = false; return true;
+}
+void pes_osk_reset() {
+    std::lock_guard lock(osk_mutex);
+    osk_pending = false; osk_ready = false; osk_initial.clear(); osk_result.clear();
+}
+extern "C" JNIEXPORT jstring JNICALL Java_com_psprecomp_pes2013_MainActivity_nativeOskRequest(JNIEnv *env, jclass) {
+    std::lock_guard lock(osk_mutex);
+    if (!osk_pending) return nullptr;
+    osk_pending = false;
+    return env->NewString(reinterpret_cast<const jchar *>(osk_initial.data()), static_cast<jsize>(osk_initial.size()));
+}
+extern "C" JNIEXPORT void JNICALL Java_com_psprecomp_pes2013_MainActivity_nativeOskResult(JNIEnv *env, jclass, jstring value, jboolean accepted) {
+    std::u16string text;
+    if (value) {
+        const jchar *chars = env->GetStringChars(value, nullptr);
+        if (chars) {
+            text.assign(reinterpret_cast<const char16_t *>(chars), env->GetStringLength(value));
+            env->ReleaseStringChars(value, chars);
+        }
+    }
+    std::lock_guard lock(osk_mutex);
+    osk_result = std::move(text); osk_accepted = accepted; osk_ready = true;
 }
 void android_game_runtime_set_status(const char *value) {
     const std::string message = value ? value : "";

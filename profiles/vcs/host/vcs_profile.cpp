@@ -1,4 +1,7 @@
 #include "vcs_profile.hpp"
+#if defined(__ANDROID__) && defined(PSPRECOMP_TITLE_PES2013)
+#include "pes_osk_bridge.hpp"
+#endif
 #include "guest_title.hpp"
 #include "vcs_native_fast_paths.hpp"
 #include "psp_kernel_library.hpp"
@@ -6264,6 +6267,7 @@ MessageDialogState message_dialog;
 struct OskDialogState {
     std::uint32_t status{};      // 0 none, 1 init, 2 visible, 3 quitting, 4 finished
     std::uint32_t parameters{};
+    bool input_started{};
 };
 OskDialogState osk_dialog;
 
@@ -6438,6 +6442,55 @@ void register_lcs_system_extras(psprecomp::Runtime &runtime) {
         [](psprecomp::Runtime &rt, psprecomp::AllegrexContext &ctx) {
             if (osk_dialog.status == 2u) {
                 const std::uint32_t params = osk_dialog.parameters;
+#if defined(__ANDROID__) && defined(PSPRECOMP_TITLE_PES2013)
+                if (!osk_dialog.input_started) {
+                    std::u16string initial;
+                    if (rt.memory().contains(params, 0x38u) && rt.memory().load32(params + 0x30u) != 0u) {
+                        const auto item = rt.memory().load32(params + 0x34u);
+                        if (rt.memory().contains(item, 52u)) {
+                            const auto intext = rt.memory().load32(item + 0x20u);
+                            for (std::uint32_t i = 0; i < 256u && intext <= UINT32_MAX - i * 2u &&
+                                 rt.memory().contains(intext + i * 2u, 2u); ++i) {
+                                const auto ch = rt.memory().load16(intext + i * 2u);
+                                if (!ch) break;
+                                initial.push_back(static_cast<char16_t>(ch));
+                            }
+                        }
+                    }
+                    pes_osk_begin(initial); osk_dialog.input_started = true;
+                }
+                std::u16string entered;
+                bool accepted = false;
+                if (!pes_osk_take_result(entered, accepted)) { ctx.set_gpr(2, 0u); return; }
+                if (rt.memory().contains(params, 0x38u)) {
+                    const auto count = std::min(rt.memory().load32(params + 0x30u), 16u);
+                    const auto base = rt.memory().load32(params + 0x34u);
+                    for (std::uint32_t i = 0; i < count && base <= UINT32_MAX - i * 52u; ++i) {
+                        const auto item = base + i * 52u;
+                        if (!rt.memory().contains(item, 52u)) continue;
+                        const auto out = rt.memory().load32(item + 0x28u);
+                        const auto capacity = rt.memory().load32(item + 0x24u);
+                        if (accepted && capacity && capacity <= 4096u &&
+                            rt.memory().contains(out, static_cast<std::size_t>(capacity) * 2u)) {
+                            const auto limit = rt.memory().load32(item + 0x30u);
+                            const auto maximum = limit ? std::min(capacity - 1u, limit) : capacity - 1u;
+                            auto length = std::min<std::size_t>(entered.size(), maximum);
+                            // Never split a UTF-16 surrogate pair at the PSP limit.
+                            if (length && length < entered.size() && entered[length - 1u] >= 0xD800u &&
+                                entered[length - 1u] <= 0xDBFFu && entered[length] >= 0xDC00u &&
+                                entered[length] <= 0xDFFFu) --length;
+                            for (std::size_t j = 0; j < length; ++j) rt.memory().store16(out + static_cast<std::uint32_t>(j * 2u), entered[j]);
+                            rt.memory().store16(out + static_cast<std::uint32_t>(length * 2u), 0u);
+                            rt.memory().store32(item + 0x2Cu, 2u);
+                        } else {
+                            rt.memory().store32(item + 0x2Cu, 1u);
+                        }
+                    }
+                    rt.memory().store32(params + 0x1Cu, 0u);
+                }
+                osk_dialog.status = 3u;
+                ctx.set_gpr(2, 0u); return;
+#else
                 if (rt.memory().contains(params, 0x38u)) {
                     const std::uint32_t data_count = rt.memory().load32(params + 0x30u);
                     const std::uint32_t data_base = rt.memory().load32(params + 0x34u);
@@ -6474,6 +6527,7 @@ void register_lcs_system_extras(psprecomp::Runtime &runtime) {
                     rt.memory().store32(params + 0x1Cu, 0u); // base.result = 0
                 }
                 osk_dialog.status = 3u;
+#endif
             }
             ctx.set_gpr(2, 0u);
         });

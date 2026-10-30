@@ -1,6 +1,10 @@
 package com.psprecomp.pes2013;
 
 import android.app.Activity;
+import android.app.AlertDialog;
+import android.widget.EditText;
+import android.view.inputmethod.InputMethodManager;
+import android.content.Context;
 import android.os.Bundle;
 import android.os.Handler;
 import android.view.*;
@@ -15,9 +19,12 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     private static native void nativeStart(String root, String settings);
     private static native void nativeStop();
     private static native void nativeInput(int buttons, int x, int y);
+    private static native String nativeOskRequest();
+    private static native void nativeOskResult(String text, boolean accepted);
     private final Handler handler = new Handler();
     private SurfaceView screen;
     private TextView status;
+    private AlertDialog oskDialog;
     private boolean foreground;
     private int touchButtons, padButtons, touchX = 128, touchY = 128, padX = 128, padY = 128;
     private final Runnable refresh = new Runnable() {
@@ -26,9 +33,32 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
             String value = nativeStatus();
             status.setText(value);
             status.setVisibility(value.equals("Imagen recibida.") ? View.GONE : View.VISIBLE);
+            String request = nativeOskRequest();
+            if (request != null) showKeyboard(request);
             handler.postDelayed(this, 500);
         }
     };
+    private void showKeyboard(String initial) {
+        EditText input = new EditText(this);
+        input.setSingleLine(true);
+        input.setText(initial);
+        input.setSelection(input.length());
+        AlertDialog dialog = new AlertDialog.Builder(this)
+            .setTitle("Introducir texto")
+            .setView(input)
+            .setPositiveButton("Aceptar", (d, which) -> nativeOskResult(input.getText().toString(), true))
+            .setNegativeButton("Cancelar", (d, which) -> nativeOskResult("", false))
+            .setOnCancelListener(d -> nativeOskResult("", false))
+            .create();
+        oskDialog = dialog;
+        dialog.setOnDismissListener(d -> { if (oskDialog == dialog) oskDialog = null; });
+        dialog.setOnShowListener(d -> {
+            input.requestFocus();
+            InputMethodManager keyboard = (InputMethodManager)getSystemService(Context.INPUT_METHOD_SERVICE);
+            if (keyboard != null) keyboard.showSoftInput(input, InputMethodManager.SHOW_IMPLICIT);
+        });
+        dialog.show();
+    }
     @Override public void onCreate(Bundle state) {
         super.onCreate(state);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -65,6 +95,7 @@ public final class MainActivity extends Activity implements SurfaceHolder.Callba
     }
     @Override protected void onPause() {
         foreground = false; handler.removeCallbacks(refresh);
+        if (oskDialog != null) { oskDialog.dismiss(); oskDialog = null; }
         touchButtons = padButtons = 0; touchX = touchY = padX = padY = 128; sendInput();
         nativeStop(); super.onPause();
     }
